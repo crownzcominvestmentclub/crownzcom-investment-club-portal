@@ -316,6 +316,6 @@ export const seedAuthUsers: AuthUser[] = [
     email: m.email,
     name: m.name,
     memberId: m.id,
-    roles: ["member"] as const,
+    roles: ["member"] as AuthUser["roles"],
   })),
 ];
