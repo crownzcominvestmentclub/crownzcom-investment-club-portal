@@ -1,4 +1,5 @@
-import type { LucideIcon, ReactNode } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import { Inbox } from "lucide-react";
 import { cn } from "@/lib/utils";
 
