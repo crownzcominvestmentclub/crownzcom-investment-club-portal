@@ -248,7 +248,7 @@ export default function AdminSavings() {
             <div className="rounded-xl border bg-card p-5 shadow-[var(--shadow-sm)] lg:col-span-1">
               <h3 className="text-sm font-semibold">Batch settings</h3>
               <p className="mt-1 text-xs text-muted-foreground">
-                Apply the same amount to selected members. Server-authoritative; will run via Convex action.
+                Apply the same amount to selected members. Server-authoritative; runs via Cloudflare Worker (POST /api/savings/batch).
               </p>
               <div className="mt-4 grid gap-3">
                 <div className="grid gap-2">

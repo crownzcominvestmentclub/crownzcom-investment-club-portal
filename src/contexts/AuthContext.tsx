@@ -1,4 +1,4 @@
-// Auth context — UI-only for now. Backend auth will be wired later through Convex/auth.
+// Auth context — UI-only for now. Backend auth will be wired to the Cloudflare Worker /api/auth endpoints.
 //
 // Behaviour:
 //   - Persists the active user + active role in localStorage so role switching survives reloads.
@@ -60,7 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signInWithEmail = useCallback(async (email: string, _password: string) => {
-    // TODO: Wire to Convex auth. For now, lookup by seed email.
+    // TODO: Wire to Worker /api/auth/sign-in. For now, lookup by seed email.
     const found = await authService.findByEmail(email);
     if (!found) throw new Error("No account found for that email");
     const role = found.roles[0];

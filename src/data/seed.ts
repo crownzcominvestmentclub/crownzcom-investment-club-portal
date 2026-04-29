@@ -1,5 +1,5 @@
-// Rich seed data for previewing UI before Convex is wired.
-// Shape mirrors src/lib/types.ts and is structured for direct insertion into Convex tables.
+// Rich seed data for previewing UI before the Cloudflare Worker is wired.
+// Shape mirrors src/lib/types.ts and is structured for insertion into Cloudflare D1 tables.
 
 import type {
   AuthUser,

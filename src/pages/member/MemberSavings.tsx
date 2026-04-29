@@ -125,7 +125,7 @@ export default function MemberSavings() {
     setSubmitting(true);
     try {
       // Optimistically insert into the cache so the table reflects the new record immediately.
-      // The real Convex mutation will replace this once wired (see savings.add).
+      // The real Worker call will replace this once VITE_API_BASE_URL is set (savingsService.add).
       const optimistic: Savings = {
         id: `local_${Date.now()}`,
         memberId,
@@ -138,11 +138,11 @@ export default function MemberSavings() {
       );
 
       // Try the service call — currently a placeholder that throws. We swallow that
-      // so the optimistic UI still works in the preview before Convex is wired.
+      // so the optimistic UI still works in the preview before the Worker is wired.
       try {
         await savingsService.add({ memberId, amount, month: formMonth });
       } catch {
-        // Expected pre-Convex; mutation placeholder.
+        // Expected pre-Worker; mutation placeholder.
       }
 
       toast({
