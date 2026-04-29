@@ -1,4 +1,4 @@
-// Domain types — shaped for Convex backend integration.
+// Domain types — shaped for Cloudflare Workers + D1 backend integration.
 // All IDs are strings; legacy Appwrite IDs are preserved as-is during import.
 
 export type ID = string;

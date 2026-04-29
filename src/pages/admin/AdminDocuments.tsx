@@ -72,7 +72,7 @@ export default function AdminDocuments() {
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Upload document</DialogTitle>
-                <DialogDescription>Add a new document to the library. File upload is wired separately via Convex storage.</DialogDescription>
+                <DialogDescription>Add a new document to the library. File upload is wired separately via R2 (uploadToR2 + documents.register).</DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-2">
                 <div className="grid gap-2">

@@ -1,5 +1,5 @@
 // React Query hooks over the service layer.
-// Components use these so swapping to Convex's `useQuery` is a localized change.
+// Components use these so swapping the underlying transport (Workers/D1) is a localized change.
 
 import { useQuery } from "@tanstack/react-query";
 import {

@@ -18,7 +18,7 @@ export function PlaceholderPage({ title, description, emptyTitle, emptyDescripti
         title={emptyTitle ?? "Module coming online"}
         description={
           emptyDescription ??
-          "This screen is part of the foundation scaffold. UI, tables, filters and forms will be added in the next iterations using the existing design system and Convex-ready service layer."
+          "This screen is part of the foundation scaffold. UI, tables, filters and forms will be added in the next iterations using the existing design system and Cloudflare Workers-ready service layer."
         }
       />
     </>

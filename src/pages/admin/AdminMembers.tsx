@@ -75,7 +75,7 @@ export default function AdminMembers() {
     }
     setSubmitting(true);
     try {
-      // Convex placeholder
+      // Worker placeholder
       toast({ title: "Member created", description: `${form.name} has been added.` });
       setOpenCreate(false);
       setForm({ name: "", email: "", phone: "", membershipNumber: "" });
