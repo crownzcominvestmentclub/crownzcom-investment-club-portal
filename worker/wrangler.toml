@@ -1,0 +1,30 @@
+name = "crownzcom-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-15"
+compatibility_flags = ["nodejs_compat"]
+
+# Frontend (Cloudflare Pages) origin allowed by CORS. Comma-separate for multiple.
+[vars]
+ALLOWED_ORIGINS = "http://localhost:8080,https://crownzcom.pages.dev"
+SESSION_COOKIE_NAME = "cz_session"
+SESSION_TTL_SECONDS = "604800" # 7 days
+# JWT_SECRET must be set as an encrypted secret:  wrangler secret put JWT_SECRET
+
+# D1 — primary database
+[[d1_databases]]
+binding = "DB"
+database_name = "crownzcom"
+database_id = "REPLACE_WITH_D1_ID" # `wrangler d1 create crownzcom`
+
+# R2 — object storage (documents, avatars, etc.)
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "crownzcom-files"
+
+# Optional KV for rate limiting / nonces
+# [[kv_namespaces]]
+# binding = "KV"
+# id = "REPLACE_WITH_KV_ID"
+
+[observability]
+enabled = true
