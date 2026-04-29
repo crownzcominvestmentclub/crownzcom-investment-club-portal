@@ -1,12 +1,25 @@
 // Service layer — frontend data access abstraction.
-// All UI calls these functions (or the hooks in @/hooks/data) so the backend
-// can be swapped to Convex queries/mutations without touching components.
 //
-// To wire Convex later:
-//   - Replace each function body with `useQuery(api.xxx.yyy, args)` style adapters,
-//     or expose Convex actions through this same API surface.
-//   - Keep the function signatures identical to avoid component churn.
+// Backend: Cloudflare Workers + D1 (database) + R2 (object storage).
+// All UI calls these services (or hooks in @/hooks/data) so the Worker API
+// can be swapped or extended without touching components.
+//
+// Behaviour:
+//   - When VITE_API_BASE_URL is set, calls hit the Cloudflare Worker.
+//   - Otherwise, reads return rich seed data and writes throw a clear
+//     "configure VITE_API_BASE_URL" error. This keeps the UI demoable
+//     without a live Worker.
+//
+// Server-authoritative endpoints (must run in the Worker against D1):
+//   POST   /api/loans/validate
+//   POST   /api/loans                       (submit long-term loan)
+//   POST   /api/loans/:id/final-approve
+//   POST   /api/loans/:id/reject
+//   POST   /api/loans/:id/repayments        (allocates borrower vs guarantor)
+//   POST   /api/guarantor-requests/:id/respond
+//   POST   /api/savings/batch               (writes ledger entries)
 
+import { api, isApiConfigured } from "@/lib/api";
 import {
   seedAuthUsers,
   seedDocumentCategories,
@@ -47,179 +60,213 @@ import type {
   ID,
 } from "@/lib/types";
 
-// Simulated network latency for realistic loading states
+// Simulated network latency for realistic loading states when using seeds
 const delay = <T,>(value: T, ms = 200): Promise<T> =>
   new Promise((resolve) => setTimeout(() => resolve(value), ms));
 
+const notWired = (op: string) =>
+  Promise.reject(
+    new Error(
+      `${op} requires the Cloudflare Worker. Set VITE_API_BASE_URL and implement the corresponding route.`
+    )
+  );
+
 // ---------- Auth ----------
 export const authService = {
-  list: () => delay(seedAuthUsers),
+  list: () => (isApiConfigured() ? api.get<AuthUser[]>("/api/auth/users") : delay(seedAuthUsers)),
   findByEmail: (email: string) =>
-    delay(seedAuthUsers.find((u) => u.email.toLowerCase() === email.toLowerCase()) ?? null),
+    isApiConfigured()
+      ? api.get<AuthUser | null>("/api/auth/lookup", { email })
+      : delay(seedAuthUsers.find((u) => u.email.toLowerCase() === email.toLowerCase()) ?? null),
+  signInWithEmail: (email: string, password: string) =>
+    isApiConfigured()
+      ? api.post<AuthUser>("/api/auth/sign-in", { email, password })
+      : notWired("auth.signInWithEmail"),
+  signOut: () => (isApiConfigured() ? api.post<void>("/api/auth/sign-out") : Promise.resolve()),
 };
 
 // ---------- Members ----------
 export const membersService = {
-  list: () => delay(seedMembers),
-  get: (id: ID) => delay(seedMembers.find((m) => m.id === id) ?? null),
-  // Convex mutation placeholder
-  create: async (_input: Omit<Member, "id">) => {
-    throw new Error("create() — wire to Convex mutation `members.create`");
-  },
-  update: async (_id: ID, _patch: Partial<Member>) => {
-    throw new Error("update() — wire to Convex mutation `members.update`");
-  },
-  remove: async (_id: ID) => {
-    throw new Error("remove() — wire to Convex mutation `members.remove`");
-  },
+  list: () => (isApiConfigured() ? api.get<Member[]>("/api/members") : delay(seedMembers)),
+  get: (id: ID) =>
+    isApiConfigured()
+      ? api.get<Member | null>(`/api/members/${id}`)
+      : delay(seedMembers.find((m) => m.id === id) ?? null),
+  create: (input: Omit<Member, "id">) =>
+    isApiConfigured() ? api.post<Member>("/api/members", input) : notWired("members.create"),
+  update: (id: ID, patch: Partial<Member>) =>
+    isApiConfigured() ? api.patch<Member>(`/api/members/${id}`, patch) : notWired("members.update"),
+  remove: (id: ID) =>
+    isApiConfigured() ? api.delete<void>(`/api/members/${id}`) : notWired("members.remove"),
 };
 
 // ---------- Savings ----------
 export const savingsService = {
-  list: () => delay(seedSavings),
-  byMember: (memberId: ID) => delay(seedSavings.filter((s) => s.memberId === memberId)),
+  list: () => (isApiConfigured() ? api.get<Savings[]>("/api/savings") : delay(seedSavings)),
+  byMember: (memberId: ID) =>
+    isApiConfigured()
+      ? api.get<Savings[]>(`/api/members/${memberId}/savings`)
+      : delay(seedSavings.filter((s) => s.memberId === memberId)),
   totalByMember: (memberId: ID) =>
-    delay(seedSavings.filter((s) => s.memberId === memberId).reduce((a, s) => a + s.amount, 0)),
-  totalAll: () => delay(seedSavings.reduce((a, s) => a + s.amount, 0)),
-  add: async (_input: Omit<Savings, "id" | "createdAt">) => {
-    throw new Error("add() — wire to Convex mutation `savings.add`");
-  },
-  batchAdd: async (_inputs: Array<Omit<Savings, "id" | "createdAt">>) => {
-    // Server-authoritative: must run as Convex action (creates ledger entries too)
-    throw new Error("batchAdd() — wire to Convex action `savings.batchAddSavings`");
-  },
+    isApiConfigured()
+      ? api.get<number>(`/api/members/${memberId}/savings/total`)
+      : delay(seedSavings.filter((s) => s.memberId === memberId).reduce((a, s) => a + s.amount, 0)),
+  totalAll: () =>
+    isApiConfigured()
+      ? api.get<number>("/api/savings/total")
+      : delay(seedSavings.reduce((a, s) => a + s.amount, 0)),
+  add: (input: Omit<Savings, "id" | "createdAt">) =>
+    isApiConfigured() ? api.post<Savings>("/api/savings", input) : notWired("savings.add"),
+  // Server-authoritative: writes ledger entries in the same D1 transaction
+  batchAdd: (inputs: Array<Omit<Savings, "id" | "createdAt">>) =>
+    isApiConfigured() ? api.post<Savings[]>("/api/savings/batch", { entries: inputs }) : notWired("savings.batchAdd"),
 };
 
 // ---------- Loans ----------
 export const loansService = {
-  list: () => delay(seedLoans),
-  byMember: (memberId: ID) => delay(seedLoans.filter((l) => l.memberId === memberId)),
-  get: (id: ID) => delay(seedLoans.find((l) => l.id === id) ?? null),
-  // Server actions (Convex):
-  validate: async (_input: unknown) => {
-    throw new Error("validate() — Convex action `loans.validateLoanApplication`");
-  },
-  submitLongTerm: async (_input: unknown) => {
-    throw new Error("submitLongTerm() — Convex action `loans.submitLongTermLoan`");
-  },
-  finalApprove: async (_loanId: ID) => {
-    throw new Error("finalApprove() — Convex action `loans.finalApproveLoan`");
-  },
-  reject: async (_loanId: ID, _reason: string) => {
-    throw new Error("reject() — Convex action `loans.rejectLoan`");
-  },
-  update: async (_id: ID, _patch: Partial<Loan>) => {
-    throw new Error("update() — Convex action `loans.updateLoanDetails`");
-  },
-  remove: async (_id: ID) => {
-    throw new Error("remove() — Convex action `loans.deleteLoan`");
-  },
+  list: () => (isApiConfigured() ? api.get<Loan[]>("/api/loans") : delay(seedLoans)),
+  byMember: (memberId: ID) =>
+    isApiConfigured()
+      ? api.get<Loan[]>(`/api/members/${memberId}/loans`)
+      : delay(seedLoans.filter((l) => l.memberId === memberId)),
+  get: (id: ID) =>
+    isApiConfigured()
+      ? api.get<Loan | null>(`/api/loans/${id}`)
+      : delay(seedLoans.find((l) => l.id === id) ?? null),
+  validate: (input: unknown) =>
+    isApiConfigured() ? api.post<{ ok: boolean; reasons?: string[] }>("/api/loans/validate", input) : notWired("loans.validate"),
+  submitLongTerm: (input: unknown) =>
+    isApiConfigured() ? api.post<Loan>("/api/loans", input) : notWired("loans.submitLongTerm"),
+  finalApprove: (loanId: ID) =>
+    isApiConfigured() ? api.post<Loan>(`/api/loans/${loanId}/final-approve`) : notWired("loans.finalApprove"),
+  reject: (loanId: ID, reason: string) =>
+    isApiConfigured() ? api.post<Loan>(`/api/loans/${loanId}/reject`, { reason }) : notWired("loans.reject"),
+  update: (id: ID, patch: Partial<Loan>) =>
+    isApiConfigured() ? api.patch<Loan>(`/api/loans/${id}`, patch) : notWired("loans.update"),
+  remove: (id: ID) =>
+    isApiConfigured() ? api.delete<void>(`/api/loans/${id}`) : notWired("loans.remove"),
 };
 
 export const loanRepaymentsService = {
-  list: () => delay(seedLoanRepayments),
-  byLoan: (loanId: ID) => delay(seedLoanRepayments.filter((r) => r.loanId === loanId)),
-  record: async (_input: Omit<LoanRepayment, "id">) => {
-    // Server-authoritative: allocates between borrower & guarantor coverage
-    throw new Error("record() — Convex action `loans.recordRepayment`");
-  },
+  list: () => (isApiConfigured() ? api.get<LoanRepayment[]>("/api/loan-repayments") : delay(seedLoanRepayments)),
+  byLoan: (loanId: ID) =>
+    isApiConfigured()
+      ? api.get<LoanRepayment[]>(`/api/loans/${loanId}/repayments`)
+      : delay(seedLoanRepayments.filter((r) => r.loanId === loanId)),
+  // Server-authoritative: allocates between borrower & guarantor coverage
+  record: (input: Omit<LoanRepayment, "id">) =>
+    isApiConfigured()
+      ? api.post<LoanRepayment>(`/api/loans/${input.loanId}/repayments`, input)
+      : notWired("loanRepayments.record"),
 };
 
 export const loanChargesService = {
-  list: () => delay(seedLoanCharges),
-  byLoan: (loanId: ID) => delay(seedLoanCharges.filter((c) => c.loanId === loanId)),
-  add: async (_input: Omit<LoanCharge, "id" | "createdAt">) => {
-    throw new Error("add() — Convex action `loans.addLoanCharge`");
-  },
-  update: async (_id: ID, _patch: Partial<LoanCharge>) => {
-    throw new Error("update() — Convex action `loans.updateLoanCharge`");
-  },
-  remove: async (_id: ID) => {
-    throw new Error("remove() — Convex action `loans.deleteLoanCharge`");
-  },
+  list: () => (isApiConfigured() ? api.get<LoanCharge[]>("/api/loan-charges") : delay(seedLoanCharges)),
+  byLoan: (loanId: ID) =>
+    isApiConfigured()
+      ? api.get<LoanCharge[]>(`/api/loans/${loanId}/charges`)
+      : delay(seedLoanCharges.filter((c) => c.loanId === loanId)),
+  add: (input: Omit<LoanCharge, "id" | "createdAt">) =>
+    isApiConfigured() ? api.post<LoanCharge>(`/api/loans/${input.loanId}/charges`, input) : notWired("loanCharges.add"),
+  update: (id: ID, patch: Partial<LoanCharge>) =>
+    isApiConfigured() ? api.patch<LoanCharge>(`/api/loan-charges/${id}`, patch) : notWired("loanCharges.update"),
+  remove: (id: ID) =>
+    isApiConfigured() ? api.delete<void>(`/api/loan-charges/${id}`) : notWired("loanCharges.remove"),
 };
 
 export const loanGuarantorsService = {
-  list: () => delay(seedLoanGuarantors),
-  byLoan: (loanId: ID) => delay(seedLoanGuarantors.filter((g) => g.loanId === loanId)),
+  list: () => (isApiConfigured() ? api.get<LoanGuarantor[]>("/api/guarantor-requests") : delay(seedLoanGuarantors)),
+  byLoan: (loanId: ID) =>
+    isApiConfigured()
+      ? api.get<LoanGuarantor[]>(`/api/loans/${loanId}/guarantors`)
+      : delay(seedLoanGuarantors.filter((g) => g.loanId === loanId)),
   pendingForGuarantor: (memberId: ID) =>
-    delay(seedLoanGuarantors.filter((g) => g.guarantorId === memberId && g.status === "pending")),
+    isApiConfigured()
+      ? api.get<LoanGuarantor[]>(`/api/members/${memberId}/guarantor-requests`, { status: "pending" })
+      : delay(seedLoanGuarantors.filter((g) => g.guarantorId === memberId && g.status === "pending")),
   byGuarantor: (memberId: ID) =>
-    delay(seedLoanGuarantors.filter((g) => g.guarantorId === memberId)),
-  respond: async (_id: ID, _decision: "approve" | "decline", _comment?: string) => {
-    throw new Error("respond() — Convex action `loans.respondGuarantorRequest`");
-  },
+    isApiConfigured()
+      ? api.get<LoanGuarantor[]>(`/api/members/${memberId}/guarantor-requests`)
+      : delay(seedLoanGuarantors.filter((g) => g.guarantorId === memberId)),
+  // Server-authoritative: must verify caller identity = guarantor
+  respond: (id: ID, decision: "approve" | "decline", comment?: string) =>
+    isApiConfigured()
+      ? api.post<LoanGuarantor>(`/api/guarantor-requests/${id}/respond`, { decision, comment })
+      : notWired("loanGuarantors.respond"),
 };
 
 export const earlyRepaymentService = {
-  list: () => delay(seedEarlyRepaymentRequests),
+  list: () =>
+    isApiConfigured() ? api.get<LoanEarlyRepaymentRequest[]>("/api/early-repayments") : delay(seedEarlyRepaymentRequests),
   byMember: (memberId: ID) =>
-    delay(seedEarlyRepaymentRequests.filter((r) => r.memberId === memberId)),
-  request: async (_input: Omit<LoanEarlyRepaymentRequest, "id" | "requestedAt">) => {
-    throw new Error("request() — Convex action `loans.requestEarlyRepayment`");
-  },
-  cancel: async (_id: ID) => {
-    throw new Error("cancel() — Convex action `loans.cancelEarlyRepaymentRequest`");
-  },
-  markPaid: async (_id: ID) => {
-    throw new Error("markPaid() — Convex action `loans.markEarlyRepaymentPaid`");
-  },
+    isApiConfigured()
+      ? api.get<LoanEarlyRepaymentRequest[]>(`/api/members/${memberId}/early-repayments`)
+      : delay(seedEarlyRepaymentRequests.filter((r) => r.memberId === memberId)),
+  request: (input: Omit<LoanEarlyRepaymentRequest, "id" | "requestedAt">) =>
+    isApiConfigured() ? api.post<LoanEarlyRepaymentRequest>("/api/early-repayments", input) : notWired("earlyRepayment.request"),
+  cancel: (id: ID) =>
+    isApiConfigured() ? api.post<void>(`/api/early-repayments/${id}/cancel`) : notWired("earlyRepayment.cancel"),
+  markPaid: (id: ID) =>
+    isApiConfigured() ? api.post<void>(`/api/early-repayments/${id}/mark-paid`) : notWired("earlyRepayment.markPaid"),
 };
 
 // ---------- Subscriptions ----------
 export const subscriptionsService = {
-  list: () => delay(seedSubscriptions),
-  byMember: (memberId: ID) => delay(seedSubscriptions.filter((s) => s.memberId === memberId)),
-  add: async (_input: Omit<Subscription, "id" | "createdAt">) => {
-    throw new Error("add() — wire to Convex mutation `subscriptions.add`");
-  },
+  list: () => (isApiConfigured() ? api.get<Subscription[]>("/api/subscriptions") : delay(seedSubscriptions)),
+  byMember: (memberId: ID) =>
+    isApiConfigured()
+      ? api.get<Subscription[]>(`/api/members/${memberId}/subscriptions`)
+      : delay(seedSubscriptions.filter((s) => s.memberId === memberId)),
+  add: (input: Omit<Subscription, "id" | "createdAt">) =>
+    isApiConfigured() ? api.post<Subscription>("/api/subscriptions", input) : notWired("subscriptions.add"),
 };
 
 // ---------- Expenses ----------
 export const expensesService = {
-  list: () => delay(seedExpenses),
-  add: async (_input: Omit<Expense, "id" | "createdAt">) => {
-    throw new Error("add() — wire to Convex mutation `expenses.add`");
-  },
-  update: async (_id: ID, _patch: Partial<Expense>) => {
-    throw new Error("update() — wire to Convex mutation `expenses.update`");
-  },
-  remove: async (_id: ID) => {
-    throw new Error("remove() — wire to Convex mutation `expenses.remove`");
-  },
+  list: () => (isApiConfigured() ? api.get<Expense[]>("/api/expenses") : delay(seedExpenses)),
+  add: (input: Omit<Expense, "id" | "createdAt">) =>
+    isApiConfigured() ? api.post<Expense>("/api/expenses", input) : notWired("expenses.add"),
+  update: (id: ID, patch: Partial<Expense>) =>
+    isApiConfigured() ? api.patch<Expense>(`/api/expenses/${id}`, patch) : notWired("expenses.update"),
+  remove: (id: ID) =>
+    isApiConfigured() ? api.delete<void>(`/api/expenses/${id}`) : notWired("expenses.remove"),
 };
 
 // ---------- Unit Trust ----------
 export const unitTrustService = {
-  list: () => delay(seedUnitTrust),
-  add: async (_input: Omit<UnitTrust, "id" | "createdAt">) => {
-    throw new Error("add() — wire to Convex mutation `unitTrust.add`");
-  },
+  list: () => (isApiConfigured() ? api.get<UnitTrust[]>("/api/unit-trust") : delay(seedUnitTrust)),
+  add: (input: Omit<UnitTrust, "id" | "createdAt">) =>
+    isApiConfigured() ? api.post<UnitTrust>("/api/unit-trust", input) : notWired("unitTrust.add"),
 };
 
-// ---------- Documents ----------
+// ---------- Documents (R2-backed) ----------
+//
+// Upload flow:
+//   1. Client calls `uploadToR2(file)` → POST /api/uploads/sign → PUT to R2.
+//   2. Client calls `documentsService.register({ ...meta, objectKey })` so the
+//      Worker writes a row in D1 and links it to the R2 object.
 export const documentsService = {
-  list: () => delay(seedDocuments),
-  categories: () => delay(seedDocumentCategories),
-  upload: async (_input: Omit<DocumentRecord, "id" | "uploadedAt">) => {
-    throw new Error("upload() — wire to Convex action `documents.upload`");
-  },
-  remove: async (_id: ID) => {
-    throw new Error("remove() — wire to Convex mutation `documents.remove`");
-  },
+  list: () => (isApiConfigured() ? api.get<DocumentRecord[]>("/api/documents") : delay(seedDocuments)),
+  categories: () =>
+    isApiConfigured() ? api.get<DocumentCategory[]>("/api/document-categories") : delay(seedDocumentCategories),
+  register: (input: Omit<DocumentRecord, "id" | "uploadedAt">) =>
+    isApiConfigured() ? api.post<DocumentRecord>("/api/documents", input) : notWired("documents.register"),
+  remove: (id: ID) =>
+    isApiConfigured() ? api.delete<void>(`/api/documents/${id}`) : notWired("documents.remove"),
 };
 
 // ---------- Reports / Ledger ----------
 export const reportsService = {
-  ledger: () => delay(seedLedger),
-  interestMonthly: () => delay(seedInterestMonthly),
-  retainedEarnings: () => delay(seedRetainedEarnings),
+  ledger: () => (isApiConfigured() ? api.get<LedgerEntry[]>("/api/reports/ledger") : delay(seedLedger)),
+  interestMonthly: () =>
+    isApiConfigured() ? api.get<InterestMonthly[]>("/api/reports/interest-monthly") : delay(seedInterestMonthly),
+  retainedEarnings: () =>
+    isApiConfigured() ? api.get<RetainedEarnings[]>("/api/reports/retained-earnings") : delay(seedRetainedEarnings),
 };
 
 // ---------- Financial Config ----------
 export const financialConfigService = {
-  get: () => delay(seedFinancialConfig),
-  update: async (_patch: Partial<FinancialConfig>) => {
-    throw new Error("update() — wire to Convex mutation `financialConfig.update`");
-  },
+  get: () => (isApiConfigured() ? api.get<FinancialConfig>("/api/financial-config") : delay(seedFinancialConfig)),
+  update: (patch: Partial<FinancialConfig>) =>
+    isApiConfigured() ? api.patch<FinancialConfig>("/api/financial-config", patch) : notWired("financialConfig.update"),
 };
