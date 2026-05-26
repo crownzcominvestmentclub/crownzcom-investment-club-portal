@@ -198,7 +198,7 @@ export default function AdminSavings() {
     }
 
     try {
-      await savingsService.batchAdd(
+      const created = await savingsService.batchAdd(
         entries.map((entry) => ({
           memberId: entry.memberId,
           amount: entry.amount,
@@ -211,7 +211,10 @@ export default function AdminSavings() {
 
       toast({
         title: "Batch contributions recorded",
-        description: `${entries.length} members, total ${formatNumber(batchTotal)} for ${formatMonth(batchMonth)}.`,
+        description:
+          created.length === entries.length
+            ? `${entries.length} members, total ${formatNumber(batchTotal)} for ${formatMonth(batchMonth)}.`
+            : `${created.length} new entries saved for ${formatMonth(batchMonth)}. ${entries.length - created.length} already existed and were skipped.`,
       });
       clearBatchMembers();
     } catch (error) {

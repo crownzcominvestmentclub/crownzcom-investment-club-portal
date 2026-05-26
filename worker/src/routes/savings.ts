@@ -79,12 +79,13 @@ savings.post("/batch", requireAuth, requireRole("admin"), async (c) => {
     requestedKeys.add(key);
   }
   const existingKeys = await findExistingSavingsKeys(c.env.DB, parsed.data.entries);
-  if (existingKeys.size > 0) {
+  const entriesToInsert = parsed.data.entries.filter((entry) => !existingKeys.has(periodKey(entry.memberId, entry.periodYear, entry.periodMonth)));
+  if (entriesToInsert.length === 0) {
     return apiError(c, 409, "duplicate_period", "One or more selected member-month savings entries already exist");
   }
   const stmts: D1PreparedStatement[] = [];
   const ids: string[] = [];
-  for (const e of parsed.data.entries) {
+  for (const e of entriesToInsert) {
     const id = newId("sav");
     ids.push(id);
     stmts.push(
