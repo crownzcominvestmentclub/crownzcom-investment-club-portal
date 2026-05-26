@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   useFinancialConfig,
+  useMember,
   useLoansByMember,
   usePendingGuarantorRequests,
   useSavingsByMember,
@@ -20,6 +21,7 @@ export default function MemberOverview() {
   const { user } = useAuth();
   const memberId = user?.memberId;
 
+  const member = useMember(memberId);
   const savings = useSavingsByMember(memberId);
   const loans = useLoansByMember(memberId);
   const guarantorRequests = usePendingGuarantorRequests(memberId);
@@ -54,6 +56,7 @@ export default function MemberOverview() {
   }, [subs.data, memberId]);
 
   const loading = savings.isLoading || loans.isLoading || cfg.isLoading;
+  const welcomeName = getSecondName(member.data?.name ?? user?.name ?? "Member");
 
   if (!memberId) {
     return (
@@ -70,7 +73,7 @@ export default function MemberOverview() {
   return (
     <>
       <PageHeader
-        title={`Welcome, ${user?.name?.split(" ")[0] ?? "Member"}`}
+        title={`Welcome, ${welcomeName}`}
         description="Here's a summary of your savings, loans and pending actions."
       />
 
@@ -193,4 +196,10 @@ export default function MemberOverview() {
       </div>
     </>
   );
+}
+
+function getSecondName(fullName: string) {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return parts[1];
+  return parts[0] ?? "Member";
 }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Plus, Banknote, ShieldCheck, Wallet, Check, X, Eye } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { KpiCard } from "@/components/KpiCard";
@@ -62,6 +62,27 @@ export default function MemberLoans() {
   const active = list.filter((l) => l.status === "active");
   const outstanding = active.reduce((a, l) => a + l.balance, 0);
   const available = Math.max(0, eligibility - outstanding);
+  const shortTermDurationOptions = useMemo(
+    () => Array.from({ length: Math.max(1, cfg.data?.maxLoanDuration ?? 6) }, (_, i) => String(i + 1)),
+    [cfg.data?.maxLoanDuration],
+  );
+  const longTermDurationOptions = useMemo(
+    () => Array.from(
+      { length: Math.max(1, cfg.data?.longTermMaxRepaymentMonths ?? cfg.data?.maxLoanDuration ?? 6) },
+      (_, i) => String(i + 1),
+    ),
+    [cfg.data?.longTermMaxRepaymentMonths, cfg.data?.maxLoanDuration],
+  );
+
+  useEffect(() => {
+    if (cfg.data && !cfg.data.longTermLoansEnabled && form.loanType === "long_term") {
+      setForm((current) => ({
+        ...current,
+        loanType: "short_term",
+        duration: String(Math.min(Number(current.duration) || 6, cfg.data.maxLoanDuration)),
+      }));
+    }
+  }, [cfg.data, form.loanType]);
 
   const memberName = (id: string) => members.data?.find((m) => m.id === id)?.name ?? "—";
   const loanRepayments = (id: string) => repayments.data?.filter((r) => r.loanId === id) ?? [];
@@ -74,8 +95,24 @@ export default function MemberLoans() {
       toast({ title: "Check your application", description: "Enter an amount and accept the terms.", variant: "destructive" });
       return;
     }
+    if (cfg.data?.longTermLoansEnabled === false && form.loanType === "long_term") {
+      toast({ title: "Long-term lending disabled", description: "This club is currently only accepting short-term loans.", variant: "destructive" });
+      return;
+    }
     if (cfg.data && (amount < cfg.data.minLoanAmount || amount > cfg.data.maxLoanAmount)) {
       toast({ title: "Out of range", description: `Allowed: ${formatUGX(cfg.data.minLoanAmount)} – ${formatUGX(cfg.data.maxLoanAmount)}`, variant: "destructive" });
+      return;
+    }
+    const duration = Number(form.duration);
+    const durationLimit = form.loanType === "long_term"
+      ? (cfg.data?.longTermMaxRepaymentMonths ?? cfg.data?.maxLoanDuration ?? 6)
+      : (cfg.data?.maxLoanDuration ?? 6);
+    if (!Number.isFinite(duration) || duration < 1 || duration > durationLimit) {
+      toast({
+        title: "Invalid duration",
+        description: `Choose a duration between 1 and ${durationLimit} months.`,
+        variant: "destructive",
+      });
       return;
     }
     setSubmitting(true);
@@ -129,13 +166,27 @@ export default function MemberLoans() {
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="short_term">Short term</SelectItem>
-                        <SelectItem value="long_term">Long term</SelectItem>
+                        {cfg.data?.longTermLoansEnabled !== false && (
+                          <SelectItem value="long_term">Long term</SelectItem>
+                        )}
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="grid gap-2">
                     <Label>Duration (months)</Label>
-                    <Input type="number" min={1} value={form.duration} onChange={(e) => setForm({ ...form, duration: e.target.value })} />
+                    <Select
+                      value={form.duration}
+                      onValueChange={(value) => setForm({ ...form, duration: value })}
+                    >
+                      <SelectTrigger><SelectValue placeholder="Choose months" /></SelectTrigger>
+                      <SelectContent>
+                        {(form.loanType === "long_term" ? longTermDurationOptions : shortTermDurationOptions).map((month) => (
+                          <SelectItem key={month} value={month}>
+                            {month} month{month === "1" ? "" : "s"}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
                 <div className="grid gap-2">
