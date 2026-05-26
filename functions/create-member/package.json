@@ -1,0 +1,9 @@
+{
+  "name": "create-member",
+  "version": "1.0.0",
+  "description": "Create SACCO member with auth user",
+  "main": "main.js",
+  "dependencies": {
+    "node-appwrite": "17.0.0"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "longterm-loan-submit",
+  "version": "1.0.0",
+  "description": "Submit long-term loan applications with guarantor request creation",
+  "main": "main.js",
+  "dependencies": {
+    "node-appwrite": "^13.0.0"
+  }
+}

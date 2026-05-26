@@ -1,0 +1,7 @@
+# Local Cloudflare Worker secrets / env vars
+JWT_SECRET=your-long-random-secret
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+EMAIL_PASSWORD_SIGNIN_ENABLED=true
+ADMIN_EMAILS=admin@example.com,other-admin@example.com
+WORKER_URL=http://localhost:8787

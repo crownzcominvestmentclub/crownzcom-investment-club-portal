@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
-import { Users, UserCheck, UserX, Search, Plus, Mail, Phone, Wallet, Banknote } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { Users, UserCheck, UserX, Search, Plus, Mail, Phone, Wallet, Banknote, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -16,11 +18,18 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
 } from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { useMembers, useSavings, useLoans } from "@/hooks/data";
+import { queryKeys, useMembers, useSavings, useLoans, useLoanRepayments, useLoanCharges } from "@/hooks/data";
 import { formatDate, formatUGX, initials } from "@/lib/format";
+import { getMemberTotalSavings, getMemberOutstandingLoans } from "@/lib/calculations";
+import { membersService } from "@/services";
 import type { Member, MemberStatus } from "@/lib/types";
 
 const ALL = "all";
@@ -29,13 +38,18 @@ export default function AdminMembers() {
   const members = useMembers();
   const savings = useSavings();
   const loans = useLoans();
+  const repayments = useLoanRepayments();
+  const charges = useLoanCharges();
   const { toast } = useToast();
+  const qc = useQueryClient();
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [selected, setSelected] = useState<Member | null>(null);
   const [openCreate, setOpenCreate] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", phone: "", membershipNumber: "" });
 
   const list = members.data ?? [];
@@ -52,21 +66,27 @@ export default function AdminMembers() {
       if (search) {
         const q = search.toLowerCase();
         return (
-          m.name.toLowerCase().includes(q) ||
-          m.email.toLowerCase().includes(q) ||
-          m.membershipNumber.toLowerCase().includes(q)
+          String(m.name).toLowerCase().includes(q) ||
+          String(m.email).toLowerCase().includes(q) ||
+          String(m.membershipNumber).toLowerCase().includes(q)
         );
       }
       return true;
     });
   }, [list, search, statusFilter]);
 
-  const memberSavings = (id: string) =>
-    savings.data?.filter((s) => s.memberId === id).reduce((a, s) => a + s.amount, 0) ?? 0;
-  const memberOutstanding = (id: string) =>
-    loans.data
-      ?.filter((l) => l.memberId === id && l.status === "active")
-      .reduce((a, l) => a + l.balance, 0) ?? 0;
+  const memberSavings = (id: string) => getMemberTotalSavings(id, savings.data ?? []);
+  const memberOutstanding = (id: string) => getMemberOutstandingLoans(id, loans.data ?? []);
+
+  const memberLoans = (id: string) => (loans.data ?? []).filter(l => l.memberId === id);
+  const memberRepayments = (id: string) => {
+    const memberLoanIds = memberLoans(id).map(l => l.id);
+    return (repayments.data ?? []).filter(r => memberLoanIds.includes(r.loanId));
+  };
+  const memberCharges = (id: string) => {
+    const memberLoanIds = memberLoans(id).map(l => l.id);
+    return (charges.data ?? []).filter(c => memberLoanIds.includes(c.loanId));
+  };
 
   const handleCreate = async () => {
     if (!form.name || !form.email) {
@@ -81,6 +101,30 @@ export default function AdminMembers() {
       setForm({ name: "", email: "", phone: "", membershipNumber: "" });
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleRemoveMember = async () => {
+    if (!selected) return;
+    setRemovingMemberId(selected.id);
+    try {
+      await membersService.remove(selected.id);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: queryKeys.members }),
+        qc.invalidateQueries({ queryKey: queryKeys.loans }),
+        qc.invalidateQueries({ queryKey: queryKeys.savings }),
+      ]);
+      toast({ title: "Member deleted", description: `${selected.name} was removed.` });
+      setDeleteDialogOpen(false);
+      setSelected(null);
+    } catch (error) {
+      toast({
+        title: "Delete failed",
+        description: error instanceof Error ? error.message : "We couldn't delete that member.",
+        variant: "destructive",
+      });
+    } finally {
+      setRemovingMemberId(null);
     }
   };
 
@@ -190,8 +234,8 @@ export default function AdminMembers() {
                   </td>
                   <td className="font-mono text-xs">{m.membershipNumber}</td>
                   <td className="text-muted-foreground">{formatDate(m.joinDate)}</td>
-                  <td className="text-right font-mono">{formatUGX(memberSavings(m.id), { compact: true })}</td>
-                  <td className="text-right font-mono">{formatUGX(memberOutstanding(m.id), { compact: true })}</td>
+                  <td className="text-right font-mono">{formatUGX(memberSavings(m.id))}</td>
+                  <td className="text-right font-mono">{formatUGX(memberOutstanding(m.id))}</td>
                   <td><StatusBadge status={m.status as MemberStatus} /></td>
                 </tr>
               ))}
@@ -207,9 +251,33 @@ export default function AdminMembers() {
 
       {/* Member detail sheet */}
       <Sheet open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
-        <SheetContent className="sm:max-w-md">
+        <SheetContent className="sm:max-w-2xl">
           {selected && (
-            <>
+            <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+              {(() => {
+                const selectedLoans = memberLoans(selected.id);
+                const selectedRepayments = memberRepayments(selected.id).sort((a, b) => String(b.paidAt).localeCompare(String(a.paidAt)));
+                const selectedCharges = memberCharges(selected.id).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+                const totalPrincipal = selectedLoans.reduce((sum, loan) => sum + loan.amount, 0);
+                const totalRepaid = selectedRepayments.reduce((sum, repayment) => sum + repayment.amount, 0);
+                const totalCharges = selectedCharges.reduce((sum, charge) => sum + charge.amount, 0);
+
+                return (
+                  <>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete member?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This dev-only action will remove {selected.name} from the members table and unlink any matching auth account from the member record.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={removingMemberId === selected.id}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction disabled={removingMemberId === selected.id} onClick={handleRemoveMember}>
+                    {removingMemberId === selected.id ? "Deleting..." : "Delete member"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
               <SheetHeader>
                 <div className="flex items-center gap-3">
                   <Avatar className="h-12 w-12">
@@ -220,35 +288,97 @@ export default function AdminMembers() {
                     <SheetDescription className="font-mono text-xs">{selected.membershipNumber}</SheetDescription>
                   </div>
                 </div>
+                <div className="pt-3">
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" size="sm" className="text-destructive">
+                      <Trash2 className="mr-1 h-4 w-4" /> Delete member
+                    </Button>
+                  </AlertDialogTrigger>
+                </div>
               </SheetHeader>
-              <div className="mt-6 space-y-4 text-sm">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Mail className="h-4 w-4" /> {selected.email}
-                </div>
-                {selected.phone && (
+
+              <Tabs defaultValue="overview" className="mt-6">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="overview">Overview</TabsTrigger>
+                  <TabsTrigger value="loans">Loans ({selectedLoans.length})</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="overview" className="space-y-4 text-sm">
                   <div className="flex items-center gap-2 text-muted-foreground">
-                    <Phone className="h-4 w-4" /> {selected.phone}
+                    <Mail className="h-4 w-4" /> {selected.email}
                   </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground">Status:</span> <StatusBadge status={selected.status as MemberStatus} />
-                </div>
-                <div className="grid grid-cols-2 gap-3 pt-2">
-                  <div className="rounded-lg border bg-muted/30 p-3">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground"><Wallet className="h-3.5 w-3.5" /> Savings</div>
-                    <p className="mt-1 text-lg font-semibold">{formatUGX(memberSavings(selected.id), { compact: true })}</p>
+                  {selected.phone && (
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Phone className="h-4 w-4" /> {selected.phone}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Status:</span> <StatusBadge status={selected.status as MemberStatus} />
                   </div>
-                  <div className="rounded-lg border bg-muted/30 p-3">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground"><Banknote className="h-3.5 w-3.5" /> Outstanding</div>
-                    <p className="mt-1 text-lg font-semibold">{formatUGX(memberOutstanding(selected.id), { compact: true })}</p>
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    <div className="rounded-lg border bg-muted/30 p-3">
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground"><Wallet className="h-3.5 w-3.5" /> Savings</div>
+                      <p className="mt-1 text-lg font-semibold">{formatUGX(memberSavings(selected.id))}</p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/30 p-3">
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground"><Banknote className="h-3.5 w-3.5" /> Outstanding</div>
+                      <p className="mt-1 text-lg font-semibold">{formatUGX(memberOutstanding(selected.id))}</p>
+                    </div>
                   </div>
-                </div>
-                <p className="pt-2 text-xs text-muted-foreground">Joined {formatDate(selected.joinDate)}</p>
-              </div>
-            </>
+                  <p className="pt-2 text-xs text-muted-foreground">Joined {formatDate(selected.joinDate)}</p>
+                </TabsContent>
+
+                <TabsContent value="loans" className="space-y-4">
+                  {selectedLoans.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Banknote className="mx-auto h-8 w-8 mb-2" />
+                      <p>No loans found for this member.</p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="rounded-lg border bg-muted/20 p-4">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                          <div>
+                            <p className="text-sm font-medium">Embedded loan activity</p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Member-level totals below are calculated from the same loan, repayment, and charge records shown in this sheet.
+                            </p>
+                          </div>
+                          <Button asChild variant="outline" size="sm">
+                            <Link to="/app/admin/loans">Open Admin Loans</Link>
+                          </Button>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                          <LoanSummary label="Principal across loans" value={formatUGX(totalPrincipal)} />
+                          <LoanSummary label="Outstanding balance" value={formatUGX(memberOutstanding(selected.id))} />
+                          <LoanSummary label="Recorded repayments" value={formatUGX(totalRepaid)} />
+                          <LoanSummary label="Recorded charges" value={formatUGX(totalCharges)} />
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-dashed bg-background px-4 py-5 text-sm text-muted-foreground">
+                        Individual loan breakdown has been moved out of this member sheet. Use <span className="font-medium text-foreground">Open Admin Loans</span> for the full loan-by-loan view, repayments, charges, and approval workflow.
+                      </div>
+                    </>
+                  )}
+                </TabsContent>
+              </Tabs>
+                  </>
+                );
+              })()}
+            </AlertDialog>
           )}
         </SheetContent>
       </Sheet>
     </>
+  );
+}
+
+function LoanSummary({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border bg-background p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 text-base font-semibold">{value}</p>
+    </div>
   );
 }

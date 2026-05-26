@@ -1,0 +1,9 @@
+{
+  "name": "batch-add-savings",
+  "version": "1.0.0",
+  "description": "Batch savings entry for SACCO members",
+  "main": "main.js",
+  "dependencies": {
+    "node-appwrite": "^13.0.0"
+  }
+}

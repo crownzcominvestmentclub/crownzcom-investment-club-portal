@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { Wallet, Banknote, ShieldCheck, TrendingUp, ArrowRight, FileText } from "lucide-react";
+import { Wallet, Banknote, ShieldCheck, TrendingUp, FileText, ArrowRight } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -72,13 +72,6 @@ export default function MemberOverview() {
       <PageHeader
         title={`Welcome, ${user?.name?.split(" ")[0] ?? "Member"}`}
         description="Here's a summary of your savings, loans and pending actions."
-        actions={
-          <Button asChild>
-            <Link to="/app/member/loans">
-              Apply for a loan <ArrowRight className="ml-1 h-4 w-4" />
-            </Link>
-          </Button>
-        }
       />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">

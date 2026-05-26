@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
-import { Upload, FileText, FolderOpen, Search, Download, Tag } from "lucide-react";
+import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { Upload, FileText, FolderOpen, Search, Download, Tag, Edit, Trash2, Eye } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/PageHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
@@ -13,47 +14,169 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { useDocumentCategories, useDocuments } from "@/hooks/data";
+import { queryKeys, useDocumentCategories, useDocuments } from "@/hooks/data";
 import { formatDate } from "@/lib/format";
+import { uploadToR2 } from "@/lib/api";
+import { documentsService } from "@/services";
+import type { DocumentRecord } from "@/lib/types";
 
 const ALL = "all";
+
+type DocumentFormState = {
+  title: string;
+  categoryId: string;
+  period: string;
+  notes: string;
+  tags: string;
+  scope: "general" | "loan_terms";
+};
+
+const EMPTY_FORM: DocumentFormState = {
+  title: "",
+  categoryId: "",
+  period: "",
+  notes: "",
+  tags: "",
+  scope: "general",
+};
 
 export default function AdminDocuments() {
   const docs = useDocuments();
   const cats = useDocumentCategories();
+  const qc = useQueryClient();
   const { toast } = useToast();
 
   const [search, setSearch] = useState("");
   const [cat, setCat] = useState<string>(ALL);
   const [open, setOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingDoc, setEditingDoc] = useState<DocumentRecord | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ title: "", category: "", period: "", notes: "", tags: "" });
+  const [form, setForm] = useState<DocumentFormState>(EMPTY_FORM);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DocumentRecord | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const filtered = useMemo(() => {
-    return (docs.data ?? []).filter((d) => {
-      if (cat !== ALL && d.category !== cat) return false;
-      if (search && !d.title.toLowerCase().includes(search.toLowerCase())) return false;
-      return true;
-    }).sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
+    return (docs.data ?? [])
+      .filter((document) => {
+        if (cat !== ALL && document.category !== cat) return false;
+        if (search && !document.title.toLowerCase().includes(search.toLowerCase())) return false;
+        return true;
+      })
+      .sort((a, b) => String(b.uploadedAt).localeCompare(String(a.uploadedAt)));
   }, [docs.data, search, cat]);
 
   const byCategory = useMemo(() => {
     const map = new Map<string, number>();
-    docs.data?.forEach((d) => map.set(d.category, (map.get(d.category) ?? 0) + 1));
+    docs.data?.forEach((document) => map.set(document.category, (map.get(document.category) ?? 0) + 1));
     return map;
   }, [docs.data]);
 
-  const handleUpload = async () => {
-    if (!form.title || !form.category) {
+  const resetForm = () => {
+    setForm(EMPTY_FORM);
+    setSelectedFile(null);
+    setEditingDoc(null);
+  };
+
+  const refreshDocuments = async () => {
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: queryKeys.documents }),
+      qc.invalidateQueries({ queryKey: queryKeys.loanTermsDocument }),
+    ]);
+  };
+
+  const handleEdit = (document: DocumentRecord) => {
+    setEditingDoc(document);
+    setForm({
+      title: document.title,
+      categoryId: document.categoryId ?? "",
+      period: document.period ?? "",
+      notes: document.notes ?? "",
+      tags: document.tags?.join(", ") ?? "",
+      scope: document.scope ?? "general",
+    });
+    setEditOpen(true);
+  };
+
+  const openDocument = async (documentId: string, download = false) => {
+    const url = await documentsService.downloadUrl(documentId);
+    if (download) {
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "";
+      anchor.target = "_blank";
+      anchor.rel = "noreferrer";
+      anchor.click();
+      return;
+    }
+
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const handleUpdate = async () => {
+    if (!editingDoc || !form.title || !form.categoryId) {
       toast({ title: "Missing fields", description: "Title and category are required.", variant: "destructive" });
       return;
     }
+
     setSubmitting(true);
     try {
+      const tags = form.tags ? form.tags.split(",").map((tag) => tag.trim()).filter(Boolean) : undefined;
+      await documentsService.update(editingDoc.id, {
+        title: form.title,
+        categoryId: form.categoryId,
+        tags,
+        period: form.period || undefined,
+        notes: form.notes || undefined,
+        scope: form.scope,
+      });
+
+      await refreshDocuments();
+      toast({ title: "Document updated", description: form.title });
+      setEditOpen(false);
+      resetForm();
+    } catch (error) {
+      toast({ title: "Update failed", description: String(error), variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!form.title || !form.categoryId || !selectedFile) {
+      toast({ title: "Missing fields", description: "Title, category, and file are required.", variant: "destructive" });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const upload = await uploadToR2(selectedFile);
+      const tags = form.tags ? form.tags.split(",").map((tag) => tag.trim()).filter(Boolean) : undefined;
+
+      await documentsService.register({
+        title: form.title,
+        categoryId: form.categoryId,
+        objectKey: upload.objectKey,
+        contentType: selectedFile.type,
+        sizeBytes: selectedFile.size,
+        tags,
+        period: form.period || undefined,
+        notes: form.notes || undefined,
+        scope: form.scope,
+      });
+
+      await refreshDocuments();
       toast({ title: "Document uploaded", description: form.title });
       setOpen(false);
-      setForm({ title: "", category: "", period: "", notes: "", tags: "" });
+      resetForm();
+    } catch (error) {
+      toast({ title: "Upload failed", description: String(error), variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
@@ -65,56 +188,91 @@ export default function AdminDocuments() {
         title="Documents"
         description="Upload and share AGM minutes, policies, statements and other club records."
         actions={
-          <Dialog open={open} onOpenChange={setOpen}>
+          <Dialog open={open} onOpenChange={(value) => {
+            setOpen(value);
+            if (!value) resetForm();
+          }}>
             <DialogTrigger asChild>
               <Button size="sm"><Upload className="mr-1 h-4 w-4" /> Upload</Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Upload document</DialogTitle>
-                <DialogDescription>Add a new document to the library. File upload is wired separately via R2 (uploadToR2 + documents.register).</DialogDescription>
+                <DialogDescription>Add a new document to the library. Uploads go to R2 and are then registered in the Worker.</DialogDescription>
               </DialogHeader>
-              <div className="grid gap-4 py-2">
-                <div className="grid gap-2">
-                  <Label>Title</Label>
-                  <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-2">
-                    <Label>Category</Label>
-                    <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
-                      <SelectTrigger><SelectValue placeholder="Choose..." /></SelectTrigger>
-                      <SelectContent>
-                        {cats.data?.map((c) => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label>Period</Label>
-                    <Input placeholder="2024" value={form.period} onChange={(e) => setForm({ ...form, period: e.target.value })} />
-                  </div>
-                </div>
-                <div className="grid gap-2">
-                  <Label>Tags (comma-separated)</Label>
-                  <Input placeholder="agm, policy" value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Notes</Label>
-                  <Textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
-                </div>
-                <div className="grid gap-2">
-                  <Label>File</Label>
-                  <Input type="file" />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setOpen(false)} disabled={submitting}>Cancel</Button>
-                <Button onClick={handleUpload} disabled={submitting}>{submitting ? "Uploading..." : "Upload"}</Button>
-              </DialogFooter>
+              <DocumentForm
+                form={form}
+                setForm={setForm}
+                categories={cats.data ?? []}
+                selectedFile={selectedFile}
+                setSelectedFile={setSelectedFile}
+                submitting={submitting}
+                submitLabel={submitting ? "Uploading..." : "Upload"}
+                onSubmit={handleUpload}
+                onCancel={() => setOpen(false)}
+                includeFile
+              />
             </DialogContent>
           </Dialog>
         }
       />
+
+      <Dialog open={editOpen} onOpenChange={(value) => {
+        setEditOpen(value);
+        if (!value) resetForm();
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit document</DialogTitle>
+            <DialogDescription>Update document metadata, category, and whether it should power the member loan terms flow.</DialogDescription>
+          </DialogHeader>
+          <DocumentForm
+            form={form}
+            setForm={setForm}
+            categories={cats.data ?? []}
+            selectedFile={null}
+            setSelectedFile={() => undefined}
+            submitting={submitting}
+            submitLabel={submitting ? "Updating..." : "Update"}
+            onSubmit={handleUpdate}
+            onCancel={() => setEditOpen(false)}
+          />
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(openState) => !openState && !deleting && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete document?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget ? `This will permanently remove "${deleteTarget.title}" from the document library.` : "This action cannot be undone."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              onClick={async (event) => {
+                event.preventDefault();
+                if (!deleteTarget) return;
+                setDeleting(true);
+                try {
+                  await documentsService.remove(deleteTarget.id);
+                  await refreshDocuments();
+                  toast({ title: "Document deleted" });
+                  setDeleteTarget(null);
+                } catch (error) {
+                  toast({ title: "Delete failed", description: String(error), variant: "destructive" });
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+            >
+              {deleting ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <KpiCard label="Documents" value={String(docs.data?.length ?? 0)} icon={FileText} accent="primary" loading={docs.isLoading} />
@@ -135,14 +293,14 @@ export default function AdminDocuments() {
                 <span className="text-xs text-muted-foreground">{docs.data?.length ?? 0}</span>
               </button>
             </li>
-            {cats.data?.map((c) => (
-              <li key={c.id}>
+            {cats.data?.map((category) => (
+              <li key={category.id}>
                 <button
-                  onClick={() => setCat(c.name)}
-                  className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition ${cat === c.name ? "bg-accent text-accent-foreground" : "hover:bg-muted"}`}
+                  onClick={() => setCat(category.name)}
+                  className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition ${cat === category.name ? "bg-accent text-accent-foreground" : "hover:bg-muted"}`}
                 >
-                  <span className="truncate">{c.name}</span>
-                  <span className="text-xs text-muted-foreground">{byCategory.get(c.name) ?? 0}</span>
+                  <span className="truncate">{category.name}</span>
+                  <span className="text-xs text-muted-foreground">{byCategory.get(category.name) ?? 0}</span>
                 </button>
               </li>
             ))}
@@ -166,34 +324,139 @@ export default function AdminDocuments() {
                 />
               </div>
             )}
-            {filtered.map((d) => (
-              <div key={d.id} className="flex items-center justify-between gap-3 p-4">
-                <div className="flex items-center gap-3 min-w-0">
+            {filtered.map((document) => (
+              <div key={document.id} className="flex items-center justify-between gap-3 p-4">
+                <div className="flex min-w-0 items-center gap-3">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     <FileText className="h-5 w-5" />
                   </span>
                   <div className="min-w-0">
-                    <p className="font-medium truncate">{d.title}</p>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {d.category} · {d.period ?? "—"} · uploaded {formatDate(d.uploadedAt)}
+                    <p className="truncate font-medium">{document.title}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {document.category} · {document.period ?? "—"} · uploaded {formatDate(document.uploadedAt)}
                     </p>
-                    {d.tags && d.tags.length > 0 && (
+                    <p className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                      {document.scope === "loan_terms" ? "Loan terms document" : "General document"}
+                    </p>
+                    {document.tags && document.tags.length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-1">
-                        {d.tags.map((t) => (
-                          <span key={t} className="rounded-full border bg-muted/50 px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{t}</span>
+                        {document.tags.map((tag) => (
+                          <span key={tag} className="rounded-full border bg-muted/50 px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{tag}</span>
                         ))}
                       </div>
                     )}
                   </div>
                 </div>
-                <Button variant="ghost" size="sm">
-                  <Download className="mr-1 h-4 w-4" /> Download
-                </Button>
+                <div className="flex gap-1">
+                  <Button variant="ghost" size="sm" onClick={() => openDocument(document.id)}>
+                    <Eye className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => openDocument(document.id, true)}>
+                    <Download className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => handleEdit(document)}>
+                    <Edit className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDeleteTarget(document)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
         </div>
       </div>
+    </>
+  );
+}
+
+function DocumentForm({
+  form,
+  setForm,
+  categories,
+  selectedFile,
+  setSelectedFile,
+  submitting,
+  submitLabel,
+  onSubmit,
+  onCancel,
+  includeFile = false,
+}: {
+  form: DocumentFormState;
+  setForm: Dispatch<SetStateAction<DocumentFormState>>;
+  categories: Array<{ id: string; name: string }>;
+  selectedFile: File | null;
+  setSelectedFile: (file: File | null) => void;
+  submitting: boolean;
+  submitLabel: string;
+  onSubmit: () => void;
+  onCancel: () => void;
+  includeFile?: boolean;
+}) {
+  return (
+    <>
+      <div className="grid gap-4 py-2">
+        <div className="grid gap-2">
+          <Label>Title</Label>
+          <Input value={form.title} onChange={(e) => setForm((current) => ({ ...current, title: e.target.value }))} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-2">
+            <Label>Category</Label>
+            <Select value={form.categoryId} onValueChange={(value) => setForm((current) => ({ ...current, categoryId: value }))}>
+              <SelectTrigger><SelectValue placeholder="Choose..." /></SelectTrigger>
+              <SelectContent>
+                {categories.map((category) => <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label>Period</Label>
+            <Input placeholder="2024" value={form.period} onChange={(e) => setForm((current) => ({ ...current, period: e.target.value }))} />
+          </div>
+        </div>
+        <div className="grid gap-2">
+          <Label>Document role</Label>
+          <Select value={form.scope} onValueChange={(value) => setForm((current) => ({ ...current, scope: value as DocumentFormState["scope"] }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="general">General document</SelectItem>
+              <SelectItem value="loan_terms">Loan terms and conditions</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-2">
+          <Label>Tags (comma-separated)</Label>
+          <Input placeholder="agm, policy" value={form.tags} onChange={(e) => setForm((current) => ({ ...current, tags: e.target.value }))} />
+        </div>
+        <div className="grid gap-2">
+          <Label>Notes</Label>
+          <Textarea rows={2} value={form.notes} onChange={(e) => setForm((current) => ({ ...current, notes: e.target.value }))} />
+        </div>
+        {includeFile && (
+          <div className="grid gap-2">
+            <Label>File</Label>
+            <Input
+              type="file"
+              onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+              accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png"
+            />
+            {selectedFile && (
+              <p className="text-xs text-muted-foreground">
+                Selected: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={onCancel} disabled={submitting}>Cancel</Button>
+        <Button onClick={onSubmit} disabled={submitting}>{submitLabel}</Button>
+      </DialogFooter>
     </>
   );
 }

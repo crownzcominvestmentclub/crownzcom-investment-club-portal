@@ -6,7 +6,7 @@ import { all, newId, nowMs, one } from "../db";
 
 export const savings = new Hono<AppContext>();
 
-const SELECT = `SELECT id, member_id AS memberId, period_month AS periodMonth, period_year AS periodYear, amount, status, paid_at AS paidAt, created_at AS createdAt FROM savings`;
+const SELECT = `SELECT id, member_id AS memberId, printf('%04d-%02d', period_year, period_month) AS month, amount, status, paid_at AS paidAt, created_at AS createdAt FROM savings`;
 
 savings.get("/", requireAuth, async (c) => {
   return c.json(await all(c.env.DB.prepare(`${SELECT} ORDER BY period_year DESC, period_month DESC`)));
@@ -26,10 +26,32 @@ const EntrySchema = z.object({
   paidAt: z.number().optional(),
 });
 
+function periodKey(memberId: string, periodYear: number, periodMonth: number) {
+  return `${memberId}:${periodYear}-${String(periodMonth).padStart(2, "0")}`;
+}
+
+async function findExistingSavingsKeys(db: D1Database, entries: Array<z.infer<typeof EntrySchema>>) {
+  if (entries.length === 0) return new Set<string>();
+  const conditions = entries.map(() => "(member_id = ? AND period_year = ? AND period_month = ?)").join(" OR ");
+  const binds = entries.flatMap((entry) => [entry.memberId, entry.periodYear, entry.periodMonth]);
+  const rows = await all<{ memberId: string; periodYear: number; periodMonth: number }>(
+    db.prepare(
+      `SELECT member_id AS memberId, period_year AS periodYear, period_month AS periodMonth
+       FROM savings
+       WHERE ${conditions}`
+    ).bind(...binds),
+  );
+  return new Set(rows.map((row) => periodKey(row.memberId, row.periodYear, row.periodMonth)));
+}
+
 savings.post("/", requireAuth, requireRole("admin"), async (c) => {
   const parsed = EntrySchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return apiError(c, 400, "invalid_input", "Invalid payload", parsed.error.flatten());
   const e = parsed.data;
+  const existingKeys = await findExistingSavingsKeys(c.env.DB, [e]);
+  if (existingKeys.has(periodKey(e.memberId, e.periodYear, e.periodMonth))) {
+    return apiError(c, 409, "duplicate_period", "A savings entry already exists for this member and month");
+  }
   const id = newId("sav");
   const userId = c.get("user")!.id;
   await c.env.DB.batch([
@@ -48,6 +70,18 @@ savings.post("/batch", requireAuth, requireRole("admin"), async (c) => {
   const parsed = BatchSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return apiError(c, 400, "invalid_input", "Invalid payload", parsed.error.flatten());
   const userId = c.get("user")!.id;
+  const requestedKeys = new Set<string>();
+  for (const entry of parsed.data.entries) {
+    const key = periodKey(entry.memberId, entry.periodYear, entry.periodMonth);
+    if (requestedKeys.has(key)) {
+      return apiError(c, 409, "duplicate_period_in_batch", "The batch contains duplicate member-month savings entries");
+    }
+    requestedKeys.add(key);
+  }
+  const existingKeys = await findExistingSavingsKeys(c.env.DB, parsed.data.entries);
+  if (existingKeys.size > 0) {
+    return apiError(c, 409, "duplicate_period", "One or more selected member-month savings entries already exist");
+  }
   const stmts: D1PreparedStatement[] = [];
   const ids: string[] = [];
   for (const e of parsed.data.entries) {

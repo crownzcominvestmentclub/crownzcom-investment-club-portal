@@ -7,6 +7,7 @@ import type {
   DocumentRecord,
   Expense,
   FinancialConfig,
+  InterestAllocation,
   InterestMonthly,
   LedgerEntry,
   Loan,
@@ -42,6 +43,9 @@ export const seedFinancialConfig: FinancialConfig = {
   id: "cfg_default",
   loanInterestRate: 3,
   longTermInterestRate: 2.5,
+  longTermLoansEnabled: true,
+  loanInterestRetentionPercentage: 20,
+  trustInterestRetentionPercentage: 30,
   interestCalculationMode: "reducing_balance",
   loanEligibilityPercentage: 200,
   defaultBankCharge: 5000,
@@ -125,10 +129,54 @@ const loanTemplates: Array<Partial<Loan> & { memberIdx: number }> = [
   { memberIdx: 13, amount: 4_000_000, duration: 8, loanType: "short_term", status: "pending_admin_approval", balance: 4_000_000 },
 ];
 
+/**
+ * Generate equal-installment repayment plan for seed loans.
+ */
+function generateRepaymentPlanForSeed(
+  amount: number,
+  durationMonths: number,
+  interestRate: number,
+  startDate: Date
+): RepaymentPlanItem[] {
+  const plan: RepaymentPlanItem[] = [];
+  let remainingBalance = amount;
+  const monthlyPayment = Math.round(amount / durationMonths);
+
+  for (let i = 0; i < durationMonths; i++) {
+    const nextMonth = new Date(startDate.getFullYear(), startDate.getMonth() + i + 1, 1);
+    const month = nextMonth.toISOString().slice(0, 7) as MonthString;
+
+    // Interest on remaining balance
+    const interestAmount = Math.round((remainingBalance * interestRate) / 100);
+    // Principal portion
+    const principalAmount = i === durationMonths - 1 ? remainingBalance : monthlyPayment;
+    // Total = principal + interest
+    const total = principalAmount + interestAmount;
+    // New balance after payment
+    remainingBalance = Math.max(0, remainingBalance - principalAmount);
+
+    plan.push({
+      installmentNumber: i + 1,
+      month,
+      dueDate: nextMonth.toISOString(),
+      principal: principalAmount,
+      interest: interestAmount,
+      chargeAmount: 0,
+      baseTotal: total,
+      total,
+      balance: remainingBalance,
+      status: "pending",
+    });
+  }
+
+  return plan;
+}
+
 export const seedLoans: Loan[] = loanTemplates.map((t, i) => {
   const member = seedMembers[t.memberIdx];
   const createdAt = iso(monthsAgo(t.duration ? t.duration - 2 : 3));
   const isLong = t.loanType === "long_term";
+  const rate = isLong ? 2.5 : 3;
   return {
     id: `loan_${String(i + 1).padStart(3, "0")}`,
     memberId: member.id,
@@ -170,6 +218,8 @@ export const seedLoanRepayments: LoanRepayment[] = seedLoans.flatMap((loan) => {
     amount: installment,
     month: monthKey(monthsAgo(paidCount - i)),
     paidAt: iso(monthsAgo(paidCount - i)),
+    isEarlyPayment: false,
+    paymentStatus: "paid",
   }));
 });
 
@@ -279,19 +329,62 @@ export const seedLedger: LedgerEntry[] = [
 
 export const seedInterestMonthly: InterestMonthly[] = [-5, -4, -3, -2, -1, 0].map((m, i) => {
   const d = monthsAgo(-m);
+  const loanInterestTotal = 350_000 + i * 25_000;
+  const trustInterestTotal = 120_000 + i * 10_000;
+  const loanInterestRetained = Math.round(loanInterestTotal * 0.2);
+  const trustInterestRetained = Math.round(trustInterestTotal * 0.3);
   return {
     id: `int_${i}`,
     month: monthKey(d),
     year: d.getFullYear(),
-    loanInterestTotal: 350_000 + i * 25_000,
-    trustInterestTotal: 120_000 + i * 10_000,
+    loanInterestTotal,
+    trustInterestTotal,
+    loanInterestRetained,
+    trustInterestRetained,
+    loanInterestDistributed: loanInterestTotal - loanInterestRetained,
+    trustInterestDistributed: trustInterestTotal - trustInterestRetained,
+    closedAt: iso(d),
+    closedBy: "usr_admin",
     createdAt: iso(d),
   };
 });
 
+export const seedInterestAllocations: InterestAllocation[] = seedMembers
+  .slice(0, 5)
+  .map((member, index) => ({
+    id: `ia_${index}`,
+    memberId: member.id,
+    month: monthKey(monthsAgo(1)),
+    year: monthsAgo(1).getFullYear(),
+    loanInterest: 56_000,
+    trustInterest: Math.max(10_000, 42_000 - index * 6_000),
+    totalInterest: 56_000 + Math.max(10_000, 42_000 - index * 6_000),
+    createdAt: iso(monthsAgo(0)),
+  }));
+
 export const seedRetainedEarnings: RetainedEarnings[] = [
-  { id: "re_2024", year: 2024, percentage: 20, createdAt: iso(new Date(2024, 11, 31)) },
-  { id: "re_2023", year: 2023, percentage: 25, createdAt: iso(new Date(2023, 11, 31)) },
+  {
+    id: "re_loan_2024_12",
+    year: 2024,
+    month: "2024-12",
+    source: "loan",
+    grossInterest: 600_000,
+    retentionPercentage: 20,
+    retainedAmount: 120_000,
+    distributedAmount: 480_000,
+    createdAt: iso(new Date(2024, 11, 31)),
+  },
+  {
+    id: "re_trust_2024_12",
+    year: 2024,
+    month: "2024-12",
+    source: "trust",
+    grossInterest: 300_000,
+    retentionPercentage: 30,
+    retainedAmount: 90_000,
+    distributedAmount: 210_000,
+    createdAt: iso(new Date(2024, 11, 31)),
+  },
 ];
 
 export const seedDocumentCategories: DocumentCategory[] = [
@@ -305,6 +398,7 @@ export const seedDocuments: DocumentRecord[] = [
   { id: "doc_1", title: "AGM Minutes 2024", category: "AGM Reports", fileId: "f_1", bucketId: "b_1", uploadedBy: seedMembers[0].id, uploadedAt: iso(monthsAgo(2)), tags: ["agm", "2024"], period: "2024" },
   { id: "doc_2", title: "Audited Financials 2024", category: "Financial Statements", fileId: "f_2", bucketId: "b_1", uploadedBy: seedMembers[0].id, uploadedAt: iso(monthsAgo(2)), tags: ["audit", "2024"], period: "2024" },
   { id: "doc_3", title: "Lending Policy v3", category: "Policies", fileId: "f_3", bucketId: "b_1", uploadedBy: seedMembers[0].id, uploadedAt: iso(monthsAgo(6)), tags: ["policy"] },
+  { id: "doc_4", title: "Loan Terms and Conditions", category: "Policies", scope: "loan_terms", fileId: "f_4", bucketId: "b_1", uploadedBy: seedMembers[0].id, uploadedAt: iso(monthsAgo(12)), tags: ["loan", "terms", "policy"], notes: "Standard lending terms and conditions for all loan applications." },
 ];
 
 // Seed auth users — one admin, one dual-role, several pure members

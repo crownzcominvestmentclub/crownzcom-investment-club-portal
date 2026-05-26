@@ -1,0 +1,102 @@
+[
+  {
+    "bucket": "documents",
+    "fileId": "69ba7a1f24dee3c9b437",
+    "name": "July 2025 Statement.pdf",
+    "objectKey": "documents/69ba7a1f24dee3c9b437",
+    "contentType": "application/pdf",
+    "sizeBytes": 268374,
+    "localPath": "E:\\crownzcom-insights\\backups\\appwrite-2026-04-18\\storage\\documents\\files\\69ba7a1f24dee3c9b437__July_2025_Statement.pdf",
+    "uploaded": true
+  },
+  {
+    "bucket": "documents",
+    "fileId": "69ba7a44c8c80b708e00",
+    "name": "August 2025 Statement.pdf",
+    "objectKey": "documents/69ba7a44c8c80b708e00",
+    "contentType": "application/pdf",
+    "sizeBytes": 271105,
+    "localPath": "E:\\crownzcom-insights\\backups\\appwrite-2026-04-18\\storage\\documents\\files\\69ba7a44c8c80b708e00__August_2025_Statement.pdf",
+    "uploaded": true
+  },
+  {
+    "bucket": "documents",
+    "fileId": "69ba7a8f3a126d3e4cd5",
+    "name": "September 2025 Statement.pdf",
+    "objectKey": "documents/69ba7a8f3a126d3e4cd5",
+    "contentType": "application/pdf",
+    "sizeBytes": 271068,
+    "localPath": "E:\\crownzcom-insights\\backups\\appwrite-2026-04-18\\storage\\documents\\files\\69ba7a8f3a126d3e4cd5__September_2025_Statement.pdf",
+    "uploaded": true
+  },
+  {
+    "bucket": "documents",
+    "fileId": "69ba7ab3a993ebd7b192",
+    "name": "October 2025 Statement.pdf",
+    "objectKey": "documents/69ba7ab3a993ebd7b192",
+    "contentType": "application/pdf",
+    "sizeBytes": 271337,
+    "localPath": "E:\\crownzcom-insights\\backups\\appwrite-2026-04-18\\storage\\documents\\files\\69ba7ab3a993ebd7b192__October_2025_Statement.pdf",
+    "uploaded": true
+  },
+  {
+    "bucket": "documents",
+    "fileId": "69ba7addf0af3d03c81a",
+    "name": "November 2025 Statement.pdf",
+    "objectKey": "documents/69ba7addf0af3d03c81a",
+    "contentType": "application/pdf",
+    "sizeBytes": 271248,
+    "localPath": "E:\\crownzcom-insights\\backups\\appwrite-2026-04-18\\storage\\documents\\files\\69ba7addf0af3d03c81a__November_2025_Statement.pdf",
+    "uploaded": true
+  },
+  {
+    "bucket": "documents",
+    "fileId": "69ba7b048fe2a1e3dcbf",
+    "name": "December 2025 Statement.pdf",
+    "objectKey": "documents/69ba7b048fe2a1e3dcbf",
+    "contentType": "application/pdf",
+    "sizeBytes": 271364,
+    "localPath": "E:\\crownzcom-insights\\backups\\appwrite-2026-04-18\\storage\\documents\\files\\69ba7b048fe2a1e3dcbf__December_2025_Statement.pdf",
+    "uploaded": true
+  },
+  {
+    "bucket": "documents",
+    "fileId": "69ba7b8df21bcb113969",
+    "name": "January 2026 Statement.pdf",
+    "objectKey": "documents/69ba7b8df21bcb113969",
+    "contentType": "application/pdf",
+    "sizeBytes": 271254,
+    "localPath": "E:\\crownzcom-insights\\backups\\appwrite-2026-04-18\\storage\\documents\\files\\69ba7b8df21bcb113969__January_2026_Statement.pdf",
+    "uploaded": true
+  },
+  {
+    "bucket": "documents",
+    "fileId": "69ba7bb5d79ed96bcf60",
+    "name": "February 2026 Statement.pdf",
+    "objectKey": "documents/69ba7bb5d79ed96bcf60",
+    "contentType": "application/pdf",
+    "sizeBytes": 271077,
+    "localPath": "E:\\crownzcom-insights\\backups\\appwrite-2026-04-18\\storage\\documents\\files\\69ba7bb5d79ed96bcf60__February_2026_Statement.pdf",
+    "uploaded": true
+  },
+  {
+    "bucket": "documents",
+    "fileId": "69d3ea2fd789bc1f683c",
+    "name": "statement.pdf",
+    "objectKey": "documents/69d3ea2fd789bc1f683c",
+    "contentType": "application/pdf",
+    "sizeBytes": 271488,
+    "localPath": "E:\\crownzcom-insights\\backups\\appwrite-2026-04-18\\storage\\documents\\files\\69d3ea2fd789bc1f683c__statement.pdf",
+    "uploaded": true
+  },
+  {
+    "bucket": "branding",
+    "fileId": "69bbab41028857403f79",
+    "name": "CIC logo.png",
+    "objectKey": "branding/69bbab41028857403f79",
+    "contentType": "image/png",
+    "sizeBytes": 100228,
+    "localPath": "E:\\crownzcom-insights\\backups\\appwrite-2026-04-18\\storage\\branding\\files\\69bbab41028857403f79__CIC_logo.png",
+    "uploaded": true
+  }
+]

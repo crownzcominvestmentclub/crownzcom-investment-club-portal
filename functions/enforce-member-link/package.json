@@ -1,0 +1,9 @@
+{
+  "name": "enforce-member-link",
+  "version": "1.0.0",
+  "description": "Delete auth users that are not linked to a member profile",
+  "main": "main.js",
+  "dependencies": {
+    "node-appwrite": "17.0.0"
+  }
+}

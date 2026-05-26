@@ -11,9 +11,14 @@ export interface Env {
   ALLOWED_ORIGINS: string;
   SESSION_COOKIE_NAME: string;
   SESSION_TTL_SECONDS: string;
+  EMAIL_PASSWORD_SIGNIN_ENABLED?: string;
+  ADMIN_EMAILS?: string;
+  WORKER_URL?: string;
 
   // secrets
   JWT_SECRET: string;
+  GOOGLE_CLIENT_ID: string;
+  GOOGLE_CLIENT_SECRET: string;
 }
 
 export type Role = "admin" | "member";

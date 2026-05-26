@@ -17,6 +17,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useMembers, useSubscriptions } from "@/hooks/data";
 import { formatDate, formatUGX } from "@/lib/format";
+import { getSubscriptionOutstandingBreakdown } from "@/lib/calculations";
 
 export default function AdminSubscriptions() {
   const subs = useSubscriptions();
@@ -31,26 +32,35 @@ export default function AdminSubscriptions() {
 
   const years = useMemo(() => {
     const set = new Set<string>();
-    subs.data?.forEach((s) => set.add(s.month.slice(0, 4)));
+    subs.data?.forEach((subscription) => set.add(String(subscription.month).slice(0, 4)));
     set.add(String(currentYear));
-    return Array.from(set).sort((a, b) => b.localeCompare(a));
+    return Array.from(set).sort((a, b) => String(b).localeCompare(String(a)));
   }, [subs.data, currentYear]);
 
   const yearSubs = useMemo(
-    () => subs.data?.filter((s) => s.month.startsWith(`${year}-`)) ?? [],
+    () => subs.data?.filter((subscription) => String(subscription.month).startsWith(`${year}-`)) ?? [],
     [subs.data, year],
   );
 
-  const paidMemberIds = useMemo(() => new Set(yearSubs.map((s) => s.memberId)), [yearSubs]);
-
-  const totalCollected = yearSubs.reduce((a, s) => a + s.amount, 0);
-  const expected = (members.data?.filter((m) => m.status === "active").length ?? 0) * 50000;
-  const outstanding = Math.max(0, expected - totalCollected);
+  const paidYearSubs = useMemo(
+    () => yearSubs.filter((subscription) => (subscription.status ?? "paid") === "paid"),
+    [yearSubs]
+  );
+  const paidMemberIds = useMemo(
+    () => new Set(paidYearSubs.map((subscription) => subscription.memberId)),
+    [paidYearSubs]
+  );
+  const breakdown = getSubscriptionOutstandingBreakdown(
+    members.data ?? [],
+    subs.data ?? [],
+    50000,
+    year
+  );
 
   const rows = useMemo(() => {
-    return (members.data ?? []).map((m) => {
-      const sub = yearSubs.find((s) => s.memberId === m.id);
-      return { member: m, sub };
+    return (members.data ?? []).map((member) => {
+      const subscription = yearSubs.find((item) => item.memberId === member.id);
+      return { member, subscription };
     });
   }, [members.data, yearSubs]);
 
@@ -59,6 +69,7 @@ export default function AdminSubscriptions() {
       toast({ title: "Missing fields", description: "Pick a member and enter an amount.", variant: "destructive" });
       return;
     }
+
     setSubmitting(true);
     try {
       toast({ title: "Subscription recorded", description: `${formatUGX(Number(form.amount))} for ${form.year}.` });
@@ -78,7 +89,7 @@ export default function AdminSubscriptions() {
             <Select value={year} onValueChange={setYear}>
               <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {years.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+                {years.map((optionYear) => <SelectItem key={optionYear} value={optionYear}>{optionYear}</SelectItem>)}
               </SelectContent>
             </Select>
             <Dialog open={open} onOpenChange={setOpen}>
@@ -93,19 +104,19 @@ export default function AdminSubscriptions() {
                 <div className="grid gap-4 py-2">
                   <div className="grid gap-2">
                     <Label>Member</Label>
-                    <Select value={form.memberId} onValueChange={(v) => setForm({ ...form, memberId: v })}>
+                    <Select value={form.memberId} onValueChange={(value) => setForm({ ...form, memberId: value })}>
                       <SelectTrigger><SelectValue placeholder="Choose a member" /></SelectTrigger>
                       <SelectContent>
-                        {members.data?.map((m) => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}
+                        {members.data?.map((member) => <SelectItem key={member.id} value={member.id}>{member.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="grid gap-2">
                     <Label>Year</Label>
-                    <Select value={form.year} onValueChange={(v) => setForm({ ...form, year: v })}>
+                    <Select value={form.year} onValueChange={(value) => setForm({ ...form, year: value })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {years.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+                        {years.map((optionYear) => <SelectItem key={optionYear} value={optionYear}>{optionYear}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
@@ -127,8 +138,15 @@ export default function AdminSubscriptions() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <KpiCard label="Year" value={year} icon={CalendarRange} accent="primary" />
         <KpiCard label="Paid members" value={`${paidMemberIds.size} / ${members.data?.length ?? 0}`} icon={CheckCircle2} accent="success" loading={subs.isLoading} />
-        <KpiCard label="Collected" value={formatUGX(totalCollected, { compact: true })} icon={Users} accent="info" loading={subs.isLoading} />
-        <KpiCard label="Outstanding (est.)" value={formatUGX(outstanding, { compact: true })} icon={AlertCircle} accent="warning" loading={subs.isLoading} />
+        <KpiCard label="Collected" value={formatUGX(breakdown.collected)} icon={Users} accent="info" loading={subs.isLoading} />
+        <KpiCard
+          label="Outstanding"
+          value={formatUGX(breakdown.outstanding)}
+          icon={AlertCircle}
+          accent="warning"
+          loading={subs.isLoading}
+          hint={`${breakdown.activeMemberCount} active members x ${formatUGX(breakdown.subscriptionAmount)}`}
+        />
       </div>
 
       <div className="mt-6 rounded-xl border bg-card shadow-[var(--shadow-sm)]">
@@ -147,13 +165,13 @@ export default function AdminSubscriptions() {
               {(members.isLoading || subs.isLoading) && Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i}>{Array.from({ length: 5 }).map((__, j) => <td key={j}><Skeleton className="h-4 w-24" /></td>)}</tr>
               ))}
-              {!members.isLoading && rows.map(({ member, sub }) => (
+              {!members.isLoading && rows.map(({ member, subscription }) => (
                 <tr key={member.id}>
                   <td className="font-medium">{member.name}</td>
                   <td className="font-mono text-xs text-muted-foreground">{member.membershipNumber}</td>
-                  <td>{sub ? <StatusBadge status="paid" /> : <StatusBadge status="pending" />}</td>
-                  <td className="text-right font-mono">{sub ? formatUGX(sub.amount) : "—"}</td>
-                  <td className="text-muted-foreground">{sub ? formatDate(sub.createdAt) : "—"}</td>
+                  <td><StatusBadge status={subscription ? "paid" : "pending"} /></td>
+                  <td className="text-right font-mono">{subscription ? formatUGX(subscription.amount) : "—"}</td>
+                  <td className="text-muted-foreground">{subscription ? formatDate(subscription.paidAt ?? subscription.createdAt) : "—"}</td>
                 </tr>
               ))}
               {!members.isLoading && rows.length === 0 && (

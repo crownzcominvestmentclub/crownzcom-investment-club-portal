@@ -21,6 +21,8 @@ const styles: Record<string, string> = {
   suspended: "bg-destructive/10 text-destructive border-destructive/20",
   // Early repayment
   paid: "bg-success/10 text-success border-success/20",
+  late: "bg-destructive/10 text-destructive border-destructive/20",
+  early: "bg-success/10 text-success border-success/20",
   cancelled: "bg-muted text-muted-foreground border-border",
 };
 
@@ -38,6 +40,8 @@ const labels: Record<string, string> = {
   inactive: "Inactive",
   suspended: "Suspended",
   paid: "Paid",
+  late: "Late",
+  early: "Early",
   cancelled: "Cancelled",
 };
 

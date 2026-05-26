@@ -1,13 +1,11 @@
 import { useMemo, useState } from "react";
-import { Plus, Wallet, TrendingUp, Calendar, Download, Search } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { Wallet, TrendingUp, Calendar, Download, Search } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -15,30 +13,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
-import { queryKeys, useSavingsByMember } from "@/hooks/data";
-import { savingsService } from "@/services";
+import { useSavingsByMember } from "@/hooks/data";
 import { formatDate, formatMonth, formatUGX } from "@/lib/format";
-import type { Savings } from "@/lib/types";
 
 const ALL = "all";
 
 export default function MemberSavings() {
   const { user } = useAuth();
   const memberId = user?.memberId;
-  const { toast } = useToast();
-  const qc = useQueryClient();
 
   const savings = useSavingsByMember(memberId);
 
@@ -46,21 +30,12 @@ export default function MemberSavings() {
   const [monthFilter, setMonthFilter] = useState<string>(ALL);
   const [search, setSearch] = useState("");
 
-  // Dialog state
-  const [open, setOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [formAmount, setFormAmount] = useState("");
-  const [formMonth, setFormMonth] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  });
-
   const records = savings.data ?? [];
 
   const years = useMemo(() => {
     const set = new Set<string>();
-    records.forEach((r) => set.add(r.month.slice(0, 4)));
-    return Array.from(set).sort((a, b) => b.localeCompare(a));
+    records.forEach((record) => set.add(String(record.month).slice(0, 4)));
+    return Array.from(set).sort((a, b) => String(b).localeCompare(String(a)));
   }, [records]);
 
   const months = [
@@ -72,96 +47,47 @@ export default function MemberSavings() {
 
   const filtered = useMemo(() => {
     return records
-      .filter((r) => {
-        const [y, m] = r.month.split("-");
-        if (yearFilter !== ALL && y !== yearFilter) return false;
-        if (monthFilter !== ALL && m !== monthFilter) return false;
+      .filter((record) => {
+        const [year, month] = String(record.month).split("-");
+        if (yearFilter !== ALL && year !== yearFilter) return false;
+        if (monthFilter !== ALL && month !== monthFilter) return false;
         if (search) {
           const q = search.toLowerCase();
-          const monthLabel = formatMonth(r.month).toLowerCase();
-          if (!monthLabel.includes(q) && !String(r.amount).includes(q)) return false;
+          const monthLabel = formatMonth(record.month).toLowerCase();
+          if (!monthLabel.includes(q) && !String(record.amount).includes(q)) return false;
         }
         return true;
       })
-      .sort((a, b) => b.month.localeCompare(a.month));
+      .sort((a, b) => String(b.month).localeCompare(String(a.month)));
   }, [records, yearFilter, monthFilter, search]);
 
-  const totalAll = useMemo(() => records.reduce((a, s) => a + s.amount, 0), [records]);
-  const totalFiltered = useMemo(() => filtered.reduce((a, s) => a + s.amount, 0), [filtered]);
+  const totalAll = useMemo(() => records.reduce((sum, record) => sum + record.amount, 0), [records]);
+  const totalFiltered = useMemo(() => filtered.reduce((sum, record) => sum + record.amount, 0), [filtered]);
   const ytdTotal = useMemo(() => {
     const yearStr = String(new Date().getFullYear());
     return records
-      .filter((r) => r.month.startsWith(yearStr))
-      .reduce((a, s) => a + s.amount, 0);
+      .filter((record) => String(record.month).startsWith(yearStr))
+      .reduce((sum, record) => sum + record.amount, 0);
   }, [records]);
   const lastMonthAmount = useMemo(() => {
-    const sorted = [...records].sort((a, b) => b.month.localeCompare(a.month));
+    const sorted = [...records].sort((a, b) => String(b.month).localeCompare(String(a.month)));
     return sorted[0]?.amount ?? 0;
   }, [records]);
 
-  // Status helper: paid / missed / pending — based on whether the member contributed in that month
-  // Since seed only contains contributions, we mark each row "paid". Pending/missed states are
-  // computed when filtering by a specific month and no record exists.
   const isMonthMissing =
     monthFilter !== ALL && yearFilter !== ALL && filtered.length === 0 && records.length > 0;
 
-  const resetForm = () => {
-    setFormAmount("");
-    const d = new Date();
-    setFormMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-  };
-
-  const handleSubmit = async () => {
-    if (!memberId) return;
-    const amount = Number(formAmount.replace(/,/g, ""));
-    if (!amount || amount <= 0) {
-      toast({ title: "Invalid amount", description: "Enter an amount greater than zero.", variant: "destructive" });
-      return;
-    }
-    if (!/^\d{4}-\d{2}$/.test(formMonth)) {
-      toast({ title: "Invalid month", description: "Pick a valid month.", variant: "destructive" });
-      return;
-    }
-    setSubmitting(true);
-    try {
-      // Optimistically insert into the cache so the table reflects the new record immediately.
-      // The real Worker call will replace this once VITE_API_BASE_URL is set (savingsService.add).
-      const optimistic: Savings = {
-        id: `local_${Date.now()}`,
-        memberId,
-        amount,
-        month: formMonth,
-        createdAt: new Date().toISOString(),
-      };
-      qc.setQueryData<Savings[]>(queryKeys.savingsByMember(memberId), (prev) =>
-        prev ? [optimistic, ...prev] : [optimistic],
-      );
-
-      // Try the service call — currently a placeholder that throws. We swallow that
-      // so the optimistic UI still works in the preview before the Worker is wired.
-      try {
-        await savingsService.add({ memberId, amount, month: formMonth });
-      } catch {
-        // Expected pre-Worker; mutation placeholder.
-      }
-
-      toast({
-        title: "Contribution recorded",
-        description: `${formatUGX(amount)} for ${formatMonth(formMonth)}.`,
-      });
-      setOpen(false);
-      resetForm();
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   const handleExport = () => {
-    const rows = [["Month", "Amount (UGX)", "Recorded"]];
-    filtered.forEach((r) => {
-      rows.push([formatMonth(r.month), String(r.amount), formatDate(r.createdAt)]);
+    const rows = [["Month", "Amount (UGX)", "Status", "Paid / Recorded"]];
+    filtered.forEach((record) => {
+      rows.push([
+        formatMonth(record.month),
+        String(record.amount),
+        String(record.status ?? "paid"),
+        formatDate(record.paidAt ?? record.createdAt),
+      ]);
     });
-    const csv = rows.map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
+    const csv = rows.map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -187,75 +113,18 @@ export default function MemberSavings() {
     <>
       <PageHeader
         title="My savings"
-        description="Your full contribution history with month and year filters."
+        description="Your recorded contribution history with month and year filters."
         actions={
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={handleExport} disabled={filtered.length === 0}>
-              <Download className="mr-1 h-4 w-4" /> Export CSV
-            </Button>
-            <Dialog
-              open={open}
-              onOpenChange={(o) => {
-                setOpen(o);
-                if (!o) resetForm();
-              }}
-            >
-              <DialogTrigger asChild>
-                <Button size="sm">
-                  <Plus className="mr-1 h-4 w-4" /> Add contribution
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Record a contribution</DialogTitle>
-                  <DialogDescription>
-                    Submit a new monthly savings contribution. An admin may verify this entry.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-2">
-                  <div className="grid gap-2">
-                    <Label htmlFor="month">Contribution month</Label>
-                    <Input
-                      id="month"
-                      type="month"
-                      value={formMonth}
-                      onChange={(e) => setFormMonth(e.target.value)}
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="amount">Amount (UGX)</Label>
-                    <Input
-                      id="amount"
-                      inputMode="numeric"
-                      placeholder="e.g. 150000"
-                      value={formAmount}
-                      onChange={(e) => setFormAmount(e.target.value.replace(/[^\d,]/g, ""))}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      {formAmount
-                        ? formatUGX(Number(formAmount.replace(/,/g, "")) || 0)
-                        : "Enter the amount you are contributing."}
-                    </p>
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setOpen(false)} disabled={submitting}>
-                    Cancel
-                  </Button>
-                  <Button onClick={handleSubmit} disabled={submitting}>
-                    {submitting ? "Saving..." : "Save contribution"}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          </div>
+          <Button variant="outline" size="sm" onClick={handleExport} disabled={filtered.length === 0}>
+            <Download className="mr-1 h-4 w-4" /> Export CSV
+          </Button>
         }
       />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           label="Total savings"
-          value={formatUGX(totalAll, { compact: true })}
+          value={formatUGX(totalAll)}
           icon={Wallet}
           accent="primary"
           loading={savings.isLoading}
@@ -263,7 +132,7 @@ export default function MemberSavings() {
         />
         <KpiCard
           label="This year"
-          value={formatUGX(ytdTotal, { compact: true })}
+          value={formatUGX(ytdTotal)}
           icon={TrendingUp}
           accent="success"
           loading={savings.isLoading}
@@ -271,14 +140,14 @@ export default function MemberSavings() {
         />
         <KpiCard
           label="Last contribution"
-          value={formatUGX(lastMonthAmount, { compact: true })}
+          value={formatUGX(lastMonthAmount)}
           icon={Calendar}
           accent="info"
           loading={savings.isLoading}
         />
         <KpiCard
           label="Filtered total"
-          value={formatUGX(totalFiltered, { compact: true })}
+          value={formatUGX(totalFiltered)}
           icon={Wallet}
           accent="warning"
           loading={savings.isLoading}
@@ -304,8 +173,8 @@ export default function MemberSavings() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL}>All years</SelectItem>
-                {years.map((y) => (
-                  <SelectItem key={y} value={y}>{y}</SelectItem>
+                {years.map((year) => (
+                  <SelectItem key={year} value={year}>{year}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -315,8 +184,8 @@ export default function MemberSavings() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL}>All months</SelectItem>
-                {months.map((m) => (
-                  <SelectItem key={m.v} value={m.v}>{m.l}</SelectItem>
+                {months.map((month) => (
+                  <SelectItem key={month.v} value={month.v}>{month.l}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -357,12 +226,12 @@ export default function MemberSavings() {
                   </tr>
                 ))}
               {!savings.isLoading &&
-                filtered.map((s) => (
-                  <tr key={s.id}>
-                    <td className="font-medium">{formatMonth(s.month)}</td>
-                    <td className="text-right font-mono">{formatUGX(s.amount)}</td>
-                    <td><StatusBadge status="paid" /></td>
-                    <td className="text-muted-foreground">{formatDate(s.createdAt)}</td>
+                filtered.map((record) => (
+                  <tr key={record.id}>
+                    <td className="font-medium">{formatMonth(record.month)}</td>
+                    <td className="text-right font-mono">{formatUGX(record.amount)}</td>
+                    <td><StatusBadge status={record.status ?? "paid"} /></td>
+                    <td className="text-muted-foreground">{formatDate(record.paidAt ?? record.createdAt)}</td>
                   </tr>
                 ))}
               {!savings.isLoading && filtered.length === 0 && (
@@ -374,7 +243,7 @@ export default function MemberSavings() {
                         isMonthMissing
                           ? "There is no recorded savings entry for the selected month and year."
                           : records.length === 0
-                            ? "You haven't made any contributions yet. Use 'Add contribution' to record your first deposit."
+                            ? "You don't have any recorded savings contributions yet. Contributions are posted by an administrator."
                             : "Try adjusting the filters or clearing your search."
                       }
                     />

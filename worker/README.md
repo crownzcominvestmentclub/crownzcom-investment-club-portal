@@ -71,5 +71,8 @@ These MUST run here, never on the client:
 - `POST /api/loans/:id/final-approve`
 - `POST /api/loans/:id/reject`
 - `POST /api/loans/:id/repayments` (allocates borrower vs guarantor and writes ledger)
+- `POST /api/loans/repayments/batch` (validates scheduled months, posts multiple repayments, writes ledger)
 - `POST /api/guarantor-requests/:id/respond`
 - `POST /api/savings/batch` (writes ledger entries in one transaction)
+
+Repayment and charge payload examples live in [../docs/loan-repayments-api.md](../docs/loan-repayments-api.md).

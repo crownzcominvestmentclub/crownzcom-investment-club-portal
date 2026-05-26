@@ -8,8 +8,6 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { useMember } from "@/hooks/data";
@@ -23,7 +21,6 @@ export default function MemberProfile() {
   const { toast } = useToast();
 
   const [form, setForm] = useState({ name: "", email: "", phone: "" });
-  const [prefs, setPrefs] = useState({ emailUpdates: true, smsAlerts: false, statementsByEmail: true });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -61,7 +58,7 @@ export default function MemberProfile() {
 
   return (
     <>
-      <PageHeader title="Profile" description="Your account, contact details and preferences." />
+      <PageHeader title="Profile" description="Your account and contact details." />
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="rounded-xl border bg-card p-6 shadow-[var(--shadow-sm)] lg:col-span-1">
@@ -84,70 +81,29 @@ export default function MemberProfile() {
         </div>
 
         <div className="lg:col-span-2">
-          <Tabs defaultValue="details">
-            <TabsList>
-              <TabsTrigger value="details">Details</TabsTrigger>
-              <TabsTrigger value="preferences">Preferences</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="details" className="mt-4">
-              <div className="rounded-xl border bg-card p-5 shadow-[var(--shadow-sm)]">
-                <h3 className="text-sm font-semibold">Contact details</h3>
-                <p className="mt-1 text-xs text-muted-foreground">Keep this current so administrators can reach you.</p>
-                <div className="mt-4 grid gap-4">
-                  <div className="grid gap-2">
-                    <Label>Full name</Label>
-                    <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label>Email</Label>
-                    <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label>Phone</Label>
-                    <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-                  </div>
-                  <div className="flex justify-end">
-                    <Button onClick={save} disabled={saving}>
-                      <Save className="mr-1 h-4 w-4" /> {saving ? "Saving..." : "Save changes"}
-                    </Button>
-                  </div>
-                </div>
+          <div className="rounded-xl border bg-card p-5 shadow-[var(--shadow-sm)]">
+            <h3 className="text-sm font-semibold">Contact details</h3>
+            <p className="mt-1 text-xs text-muted-foreground">Keep this current so administrators can reach you.</p>
+            <div className="mt-4 grid gap-4">
+              <div className="grid gap-2">
+                <Label>Full name</Label>
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               </div>
-            </TabsContent>
-
-            <TabsContent value="preferences" className="mt-4">
-              <div className="rounded-xl border bg-card p-5 shadow-[var(--shadow-sm)]">
-                <h3 className="text-sm font-semibold">Notifications</h3>
-                <p className="mt-1 text-xs text-muted-foreground">Choose which updates you receive.</p>
-                <ul className="mt-4 space-y-4">
-                  <PrefRow
-                    label="Email updates"
-                    description="General club announcements and newsletters."
-                    checked={prefs.emailUpdates}
-                    onChange={(v) => setPrefs({ ...prefs, emailUpdates: v })}
-                  />
-                  <PrefRow
-                    label="SMS alerts"
-                    description="Loan approvals, repayment reminders and guarantor requests."
-                    checked={prefs.smsAlerts}
-                    onChange={(v) => setPrefs({ ...prefs, smsAlerts: v })}
-                  />
-                  <PrefRow
-                    label="Statements by email"
-                    description="Receive a monthly personal statement automatically."
-                    checked={prefs.statementsByEmail}
-                    onChange={(v) => setPrefs({ ...prefs, statementsByEmail: v })}
-                  />
-                </ul>
-                <div className="mt-6 flex justify-end">
-                  <Button onClick={save} disabled={saving}>
-                    <Save className="mr-1 h-4 w-4" /> {saving ? "Saving..." : "Save preferences"}
-                  </Button>
-                </div>
+              <div className="grid gap-2">
+                <Label>Email</Label>
+                <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
               </div>
-            </TabsContent>
-          </Tabs>
+              <div className="grid gap-2">
+                <Label>Phone</Label>
+                <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+              </div>
+              <div className="flex justify-end">
+                <Button onClick={save} disabled={saving}>
+                  <Save className="mr-1 h-4 w-4" /> {saving ? "Saving..." : "Save changes"}
+                </Button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </>
@@ -163,17 +119,5 @@ function Row({ icon: Icon, label, value }: { icon: typeof User; label: string; v
         <p className="truncate text-sm font-medium">{value}</p>
       </div>
     </div>
-  );
-}
-
-function PrefRow({ label, description, checked, onChange }: { label: string; description: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <li className="flex items-start justify-between gap-4">
-      <div>
-        <p className="text-sm font-medium">{label}</p>
-        <p className="text-xs text-muted-foreground">{description}</p>
-      </div>
-      <Switch checked={checked} onCheckedChange={onChange} />
-    </li>
   );
 }

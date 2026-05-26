@@ -127,7 +127,26 @@ export const financialConfig = new Hono<AppContext>();
 financialConfig.get("/", requireAuth, async (c) => {
   const r = await one(
     c.env.DB.prepare(
-      "SELECT currency, monthly_contribution AS monthlyContribution, short_term_rate_pct AS shortTermRatePct, long_term_rate_pct AS longTermRatePct, loan_eligibility_pct AS loanEligibilityPct, late_penalty_pct AS latePenaltyPct, updated_at AS updatedAt FROM financial_config WHERE id = 1"
+      `SELECT id,
+              currency,
+              monthly_contribution AS monthlyContribution,
+              short_term_rate_pct AS shortTermRatePct,
+              long_term_rate_pct AS longTermRatePct,
+              loan_eligibility_pct AS loanEligibilityPct,
+              late_penalty_pct AS latePenaltyPct,
+              default_bank_charge AS defaultBankCharge,
+              early_repayment_penalty AS earlyRepaymentPenalty,
+              min_loan_amount AS minLoanAmount,
+              max_loan_amount AS maxLoanAmount,
+              long_term_max_repayment_months AS longTermMaxRepaymentMonths,
+              interest_calculation_mode AS interestCalculationMode,
+              max_loan_duration AS maxLoanDuration,
+              long_term_loans_enabled AS longTermLoansEnabled,
+              loan_interest_retention_pct AS loanInterestRetentionPct,
+              trust_interest_retention_pct AS trustInterestRetentionPct,
+              updated_at AS updatedAt
+       FROM financial_config
+       WHERE id = 1`
     )
   );
   return c.json(r ?? {});
@@ -139,6 +158,16 @@ const ConfigPatch = z
     longTermRatePct: z.number().nonnegative(),
     loanEligibilityPct: z.number().nonnegative(),
     latePenaltyPct: z.number().nonnegative(),
+    defaultBankCharge: z.number().nonnegative(),
+    earlyRepaymentPenalty: z.number().min(0).max(100),
+    minLoanAmount: z.number().int().nonnegative(),
+    maxLoanAmount: z.number().int().nonnegative(),
+    longTermMaxRepaymentMonths: z.number().int().positive(),
+    interestCalculationMode: z.enum(["flat", "reducing_balance"]),
+    maxLoanDuration: z.number().int().positive(),
+    longTermLoansEnabled: z.boolean(),
+    loanInterestRetentionPct: z.number().min(0).max(100),
+    trustInterestRetentionPct: z.number().min(0).max(100),
   })
   .partial();
 financialConfig.patch("/", requireAuth, requireRole("admin"), async (c) => {
@@ -150,13 +179,23 @@ financialConfig.patch("/", requireAuth, requireRole("admin"), async (c) => {
     longTermRatePct: "long_term_rate_pct",
     loanEligibilityPct: "loan_eligibility_pct",
     latePenaltyPct: "late_penalty_pct",
+    defaultBankCharge: "default_bank_charge",
+    earlyRepaymentPenalty: "early_repayment_penalty",
+    minLoanAmount: "min_loan_amount",
+    maxLoanAmount: "max_loan_amount",
+    longTermMaxRepaymentMonths: "long_term_max_repayment_months",
+    interestCalculationMode: "interest_calculation_mode",
+    maxLoanDuration: "max_loan_duration",
+    longTermLoansEnabled: "long_term_loans_enabled",
+    loanInterestRetentionPct: "loan_interest_retention_pct",
+    trustInterestRetentionPct: "trust_interest_retention_pct",
   };
   const sets: string[] = [];
   const binds: unknown[] = [];
   for (const [k, v] of Object.entries(p.data)) {
     if (v === undefined) continue;
     sets.push(`${map[k]} = ?`);
-    binds.push(v);
+    binds.push(k === "longTermLoansEnabled" ? (v ? 1 : 0) : v);
   }
   if (sets.length === 0) return apiError(c, 400, "no_changes", "No fields to update");
   sets.push("updated_at = ?");
@@ -164,5 +203,29 @@ financialConfig.patch("/", requireAuth, requireRole("admin"), async (c) => {
   await c.env.DB.prepare(`UPDATE financial_config SET ${sets.join(", ")} WHERE id = 1`)
     .bind(...binds)
     .run();
-  return c.redirect("/api/financial-config", 303);
+  const updated = await one(
+    c.env.DB.prepare(
+      `SELECT id,
+              currency,
+              monthly_contribution AS monthlyContribution,
+              short_term_rate_pct AS shortTermRatePct,
+              long_term_rate_pct AS longTermRatePct,
+              loan_eligibility_pct AS loanEligibilityPct,
+              late_penalty_pct AS latePenaltyPct,
+              default_bank_charge AS defaultBankCharge,
+              early_repayment_penalty AS earlyRepaymentPenalty,
+              min_loan_amount AS minLoanAmount,
+              max_loan_amount AS maxLoanAmount,
+              long_term_max_repayment_months AS longTermMaxRepaymentMonths,
+              interest_calculation_mode AS interestCalculationMode,
+              max_loan_duration AS maxLoanDuration,
+              long_term_loans_enabled AS longTermLoansEnabled,
+              loan_interest_retention_pct AS loanInterestRetentionPct,
+              trust_interest_retention_pct AS trustInterestRetentionPct,
+              updated_at AS updatedAt
+       FROM financial_config
+       WHERE id = 1`,
+    ),
+  );
+  return c.json(updated ?? {});
 });

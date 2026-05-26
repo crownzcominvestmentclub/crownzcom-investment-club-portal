@@ -24,7 +24,11 @@ export default function AdminOverview() {
     [loans.data]
   );
   const outstanding = useMemo(
-    () => activeLoans.reduce((a, l) => a + l.balance, 0),
+    () =>
+      activeLoans.reduce(
+        (a, l) => a + Number(l.balance ?? l.outstanding ?? 0),
+        0
+      ),
     [activeLoans]
   );
   const trustBalance = useMemo(() => {
@@ -37,8 +41,8 @@ export default function AdminOverview() {
   }, [trust.data]);
   const pendingApproval = useMemo(
     () =>
-      loans.data?.filter(
-        (l) => l.status === "pending_admin_approval" || l.status === "pending_guarantor_approval"
+      loans.data?.filter((l) =>
+        ["pending_admin_approval", "pending_guarantor_approval"].includes(l.status)
       ) ?? [],
     [loans.data]
   );
@@ -50,7 +54,7 @@ export default function AdminOverview() {
   const recentLoans = useMemo(() => {
     if (!loans.data || !members.data) return [];
     return [...loans.data]
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
       .slice(0, 6)
       .map((l) => ({
         ...l,
@@ -58,7 +62,7 @@ export default function AdminOverview() {
       }));
   }, [loans.data, members.data]);
 
-  const loading = members.isLoading || savings.isLoading || loans.isLoading;
+  const loading = members.isLoading || savings.isLoading || loans.isLoading || expenses.isLoading || trust.isLoading;
 
   return (
     <>
@@ -77,7 +81,7 @@ export default function AdminOverview() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           label="Total savings"
-          value={formatUGX(totalSavings, { compact: true })}
+          value={formatUGX(totalSavings)}
           icon={Wallet}
           accent="primary"
           trend={{ value: "+8.2%", direction: "up" }}
@@ -94,7 +98,7 @@ export default function AdminOverview() {
         />
         <KpiCard
           label="Loans outstanding"
-          value={formatUGX(outstanding, { compact: true })}
+          value={formatUGX(outstanding)}
           icon={Banknote}
           accent="warning"
           hint={`${activeLoans.length} active`}
@@ -102,7 +106,7 @@ export default function AdminOverview() {
         />
         <KpiCard
           label="Unit trust balance"
-          value={formatUGX(trustBalance, { compact: true })}
+          value={formatUGX(trustBalance)}
           icon={TrendingUp}
           accent="success"
           trend={{ value: "+2.4%", direction: "up" }}
@@ -139,10 +143,10 @@ export default function AdminOverview() {
                 {recentLoans.map((l) => (
                   <tr key={l.id}>
                     <td className="font-medium">{l.memberName}</td>
-                    <td className="capitalize text-muted-foreground">{l.loanType.replace("_", " ")}</td>
-                    <td className="text-right font-mono">{formatUGX(l.amount)}</td>
+                    <td className="capitalize text-muted-foreground">{String(l.loanType ?? l.type).replace("_", " ")}</td>
+                    <td className="text-right font-mono">{formatUGX(l.amount ?? l.principal ?? 0)}</td>
                     <td><StatusBadge status={l.status} /></td>
-                    <td className="text-muted-foreground">{formatDate(l.createdAt)}</td>
+                    <td className="text-muted-foreground">{formatDate(l.createdAt ?? l.appliedAt)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -185,7 +189,7 @@ export default function AdminOverview() {
           <div className="rounded-xl border bg-card p-5 shadow-soft">
             <h2 className="text-base font-semibold">Operating expenses</h2>
             <p className="mt-1 text-xs text-muted-foreground">Running total this period</p>
-            <p className="mt-3 text-2xl font-semibold">{formatUGX(totalExpenses, { compact: true })}</p>
+            <p className="mt-3 text-2xl font-semibold">{formatUGX(totalExpenses)}</p>
             <Button variant="outline" size="sm" className="mt-4 w-full" asChild>
               <Link to="/app/admin/expenses">Manage expenses</Link>
             </Button>

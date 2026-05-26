@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppContext } from "../middleware";
 import { apiError, requireAuth, requireRole } from "../middleware";
 import { all, newId, nowMs, one } from "../db";
+import { getChargesByLoanIds, getRepaymentsByLoanIds, parseLoan } from "./loans";
 
 export const members = new Hono<AppContext>();
 
@@ -81,7 +82,16 @@ members.patch("/:id", requireAuth, requireRole("admin"), async (c) => {
 });
 
 members.delete("/:id", requireAuth, requireRole("admin"), async (c) => {
-  await c.env.DB.prepare("DELETE FROM members WHERE id = ?").bind(c.req.param("id")).run();
+  const memberId = c.req.param("id");
+  const member = await one<{ id: string; email: string }>(
+    c.env.DB.prepare("SELECT id, email FROM members WHERE id = ?").bind(memberId),
+  );
+  if (!member) return apiError(c, 404, "not_found", "Member not found");
+
+  await c.env.DB.batch([
+    c.env.DB.prepare("UPDATE auth_users SET member_id = NULL WHERE member_id = ? OR lower(email) = lower(?)").bind(member.id, member.email),
+    c.env.DB.prepare("DELETE FROM members WHERE id = ?").bind(member.id),
+  ]);
   return c.body(null, 204);
 });
 
@@ -89,7 +99,7 @@ members.delete("/:id", requireAuth, requireRole("admin"), async (c) => {
 members.get("/:id/savings", requireAuth, async (c) => {
   const rows = await all(
     c.env.DB.prepare(
-      "SELECT id, member_id AS memberId, period_month AS periodMonth, period_year AS periodYear, amount, status, paid_at AS paidAt, created_at AS createdAt FROM savings WHERE member_id = ? ORDER BY period_year DESC, period_month DESC"
+      "SELECT id, member_id AS memberId, printf('%04d-%02d', period_year, period_month) AS month, amount, status, paid_at AS paidAt, created_at AS createdAt FROM savings WHERE member_id = ? ORDER BY period_year DESC, period_month DESC"
     ).bind(c.req.param("id"))
   );
   return c.json(rows);
@@ -105,10 +115,13 @@ members.get("/:id/savings/total", requireAuth, async (c) => {
 members.get("/:id/loans", requireAuth, async (c) => {
   const rows = await all(
     c.env.DB.prepare(
-      "SELECT id, member_id AS memberId, type, principal, interest_rate_pct AS interestRatePct, term_months AS termMonths, purpose, status, outstanding, applied_at AS appliedAt, approved_at AS approvedAt FROM loans WHERE member_id = ? ORDER BY applied_at DESC"
+      "SELECT id, member_id AS memberId, type, principal, interest_rate_pct AS interestRatePct, term_months AS termMonths, purpose, status, outstanding, applied_at AS appliedAt, approved_at AS approvedAt, repayment_type AS repaymentType, repayment_plan AS repaymentPlan, terms_accepted AS termsAccepted, borrower_coverage AS borrowerCoverage, repayment_start_month AS repaymentStartMonth, first_repayment_date AS firstRepaymentDate, repayment_day_of_month AS repaymentDayOfMonth, repayment_plan_version AS repaymentPlanVersion, repayment_plan_generated_at AS repaymentPlanGeneratedAt, repayment_plan_basis AS repaymentPlanBasis FROM loans WHERE member_id = ? ORDER BY applied_at DESC"
     ).bind(c.req.param("id"))
   );
-  return c.json(rows);
+  const loanIds = rows.map((row: any) => row.id);
+  const repaymentsByLoanId = await getRepaymentsByLoanIds(c.env.DB, loanIds);
+  const chargesByLoanId = await getChargesByLoanIds(c.env.DB, loanIds);
+  return c.json(rows.map((row: any) => parseLoan(row, repaymentsByLoanId.get(row.id) ?? [], chargesByLoanId.get(row.id) ?? [])));
 });
 
 members.get("/:id/subscriptions", requireAuth, async (c) => {
@@ -135,7 +148,7 @@ members.get("/:id/guarantor-requests", requireAuth, async (c) => {
 members.get("/:id/early-repayments", requireAuth, async (c) => {
   const rows = await all(
     c.env.DB.prepare(
-      "SELECT id, loan_id AS loanId, member_id AS memberId, amount, status, requested_at AS requestedAt, resolved_at AS resolvedAt FROM early_repayment_requests WHERE member_id = ? ORDER BY requested_at DESC"
+      "SELECT id, loan_id AS loanId, member_id AS memberId, status, amount, requested_at AS requestedAt, resolved_at AS resolvedAt, interest_calculation_mode AS interestCalculationModeApplied, monthly_interest_rate AS monthlyInterestRateApplied, penalty_rate AS penaltyRateApplied, interest_amount AS interestAmount, principal_amount AS principalAmount, charge_amount AS chargeAmount, balance_at_request AS balanceAtRequest, requested_for_date AS requestedForDate, paid_at AS paidAt, admin_comment AS adminComment FROM early_repayment_requests WHERE member_id = ? ORDER BY requested_at DESC"
     ).bind(c.req.param("id"))
   );
   return c.json(rows);

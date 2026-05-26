@@ -12,6 +12,7 @@ import { auth } from "./routes/auth";
 import { members } from "./routes/members";
 import { savings } from "./routes/savings";
 import { loans } from "./routes/loans";
+import { earlyRepayments } from "./routes/earlyRepayments";
 import { guarantors } from "./routes/guarantors";
 import {
   expenses,
@@ -21,6 +22,7 @@ import {
   unitTrust,
 } from "./routes/misc";
 import { documents, documentCategories, uploads } from "./routes/documents";
+import { config } from "./routes/config";
 
 const app = new Hono<AppContext>();
 
@@ -32,9 +34,11 @@ app.get("/health", (c) => c.json({ ok: true, t: Date.now() }));
 
 const api = new Hono<AppContext>();
 api.route("/auth", auth);
+api.route("/config", config);
 api.route("/members", members);
 api.route("/savings", savings);
 api.route("/loans", loans);
+api.route("/early-repayments", earlyRepayments);
 api.route("/guarantor-requests", guarantors);
 api.route("/subscriptions", subscriptions);
 api.route("/expenses", expenses);

@@ -1,0 +1,9 @@
+{
+  "name": "loan-management",
+  "version": "1.0.0",
+  "description": "SACCO loan management functions",
+  "main": "main.js",
+  "dependencies": {
+    "node-appwrite": "^13.0.0"
+  }
+}

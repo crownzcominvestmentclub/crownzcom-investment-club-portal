@@ -1,0 +1,9 @@
+{
+  "name": "loan-final-approval",
+  "version": "1.0.0",
+  "description": "Admin-only final loan approval with guarantor and repayment validation",
+  "main": "main.js",
+  "dependencies": {
+    "node-appwrite": "^13.0.0"
+  }
+}

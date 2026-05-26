@@ -1,0 +1,9 @@
+{
+  "name": "guarantor-response",
+  "version": "1.0.0",
+  "description": "Guarantor approve/decline workflow with safe coverage recomputation",
+  "main": "main.js",
+  "dependencies": {
+    "node-appwrite": "^13.0.0"
+  }
+}

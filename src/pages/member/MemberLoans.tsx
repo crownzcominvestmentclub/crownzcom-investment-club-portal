@@ -23,10 +23,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  useFinancialConfig, useLoanRepayments, useLoansByMember, useMembers,
-  usePendingGuarantorRequests, useSavingsByMember,
+  useEarlyRepaymentsByMember,
+  useFinancialConfig, useLoanCharges, useLoanRepayments, useLoansByMember, useMembers,
+  usePendingGuarantorRequests, useSavingsByMember, useLoanTermsDocument,
 } from "@/hooks/data";
 import { formatDate, formatMonth, formatUGX } from "@/lib/format";
+import { groupLoanCharges } from "@/lib/repayment";
 import type { Loan, LoanStatus, LoanType } from "@/lib/types";
 
 export default function MemberLoans() {
@@ -35,10 +37,13 @@ export default function MemberLoans() {
   const { toast } = useToast();
   const loans = useLoansByMember(memberId);
   const repayments = useLoanRepayments();
+  const charges = useLoanCharges();
   const savings = useSavingsByMember(memberId);
   const cfg = useFinancialConfig();
   const guarantorReqs = usePendingGuarantorRequests(memberId);
+  const earlyRepayments = useEarlyRepaymentsByMember(memberId);
   const members = useMembers();
+  const loanTermsDocument = useLoanTermsDocument();
 
   const [selected, setSelected] = useState<Loan | null>(null);
   const [open, setOpen] = useState(false);
@@ -60,6 +65,8 @@ export default function MemberLoans() {
 
   const memberName = (id: string) => members.data?.find((m) => m.id === id)?.name ?? "—";
   const loanRepayments = (id: string) => repayments.data?.filter((r) => r.loanId === id) ?? [];
+  const loanCharges = (id: string) => charges.data?.filter((charge) => charge.loanId === id) ?? [];
+  const loanEarlyRepayments = (id: string) => earlyRepayments.data?.filter((request) => request.loanId === id) ?? [];
 
   const handleSubmit = async () => {
     const amount = Number(form.amount);
@@ -147,7 +154,22 @@ export default function MemberLoans() {
                 </div>
                 <label className="flex items-start gap-2 text-sm">
                   <Checkbox checked={form.terms} onCheckedChange={(v) => setForm({ ...form, terms: !!v })} />
-                  <span>I accept the lending terms and authorise the deductions from my savings if needed.</span>
+                  <span>
+                    I accept the{" "}
+                    {loanTermsDocument.data?.id ? (
+                      <a
+                        href={`/app/member/documents/${loanTermsDocument.data.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-primary underline underline-offset-4"
+                      >
+                        lending terms
+                      </a>
+                    ) : (
+                      "lending terms"
+                    )}{" "}
+                    and authorise the deductions from my savings if needed.
+                  </span>
                 </label>
               </div>
               <DialogFooter>
@@ -271,20 +293,89 @@ export default function MemberLoans() {
                 <div className="mt-4 rounded-lg border bg-muted/30 p-3"><p className="text-xs text-muted-foreground">Purpose</p><p className="mt-1 text-sm">{selected.purpose}</p></div>
               )}
               <div className="mt-4">
-                <h4 className="text-sm font-semibold">Repayments</h4>
+                <h4 className="text-sm font-semibold">Repayment schedule</h4>
+                <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border">
+                  <table className="data-table">
+                    <thead><tr><th>Month</th><th className="text-right">Total</th><th className="text-right">Principal</th><th className="text-right">Interest</th><th className="text-right">Balance</th><th>Status</th></tr></thead>
+                    <tbody>
+                      {selected.repaymentPlan?.map((item) => (
+                        <tr key={`${selected.id}-${item.month}`}>
+                          <td>{formatMonth(item.month)}</td>
+                          <td className="text-right font-mono">{formatUGX(item.total)}</td>
+                          <td className="text-right font-mono">{formatUGX(item.principal)}</td>
+                          <td className="text-right font-mono">{formatUGX(item.interest)}</td>
+                          <td className="text-right font-mono">{formatUGX(item.balance)}</td>
+                          <td><StatusBadge status={item.status} /></td>
+                        </tr>
+                      ))}
+                      {(!selected.repaymentPlan || selected.repaymentPlan.length === 0) && (
+                        <tr><td colSpan={6} className="py-4 text-center text-sm text-muted-foreground">No repayment schedule available.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div className="mt-4">
+                <h4 className="text-sm font-semibold">Recorded repayments</h4>
                 <div className="mt-2 max-h-48 overflow-y-auto rounded-lg border">
                   <table className="data-table">
-                    <thead><tr><th>Month</th><th className="text-right">Amount</th><th>Paid</th></tr></thead>
+                    <thead><tr><th>Month</th><th className="text-right">Amount</th><th>Paid</th><th>Status</th></tr></thead>
                     <tbody>
                       {loanRepayments(selected.id).map((r) => (
                         <tr key={r.id}>
                           <td>{formatMonth(r.month)}</td>
                           <td className="text-right font-mono">{formatUGX(r.amount)}</td>
                           <td className="text-muted-foreground">{formatDate(r.paidAt)}</td>
+                          <td><StatusBadge status={r.paymentStatus} /></td>
                         </tr>
                       ))}
                       {loanRepayments(selected.id).length === 0 && (
-                        <tr><td colSpan={3} className="py-4 text-center text-sm text-muted-foreground">No repayments yet.</td></tr>
+                        <tr><td colSpan={4} className="py-4 text-center text-sm text-muted-foreground">No repayments yet.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div className="mt-4">
+                <h4 className="text-sm font-semibold">Charges</h4>
+                <div className="mt-2 space-y-3">
+                  {groupLoanCharges(loanCharges(selected.id), selected).map((group) => (
+                    <div key={group.key} className="rounded-lg border">
+                      <div className="border-b bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground">{group.label}</div>
+                      <div className="divide-y">
+                        {group.charges.map((charge) => (
+                          <div key={charge.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                            <div>
+                              <p className="font-medium">{charge.description}</p>
+                              <p className="text-xs text-muted-foreground">{formatDate(charge.createdAt)}</p>
+                            </div>
+                            <p className="font-mono">{formatUGX(charge.amount)}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  {loanCharges(selected.id).length === 0 && (
+                    <div className="rounded-lg border px-3 py-4 text-center text-sm text-muted-foreground">No charges recorded.</div>
+                  )}
+                </div>
+              </div>
+              <div className="mt-4">
+                <h4 className="text-sm font-semibold">Early repayment requests</h4>
+                <div className="mt-2 max-h-48 overflow-y-auto rounded-lg border">
+                  <table className="data-table">
+                    <thead><tr><th>Requested</th><th className="text-right">Amount</th><th>Status</th><th>For date</th></tr></thead>
+                    <tbody>
+                      {loanEarlyRepayments(selected.id).map((request) => (
+                        <tr key={request.id}>
+                          <td>{formatDate(request.requestedAt)}</td>
+                          <td className="text-right font-mono">{formatUGX(request.amount)}</td>
+                          <td><StatusBadge status={request.status} /></td>
+                          <td className="text-muted-foreground">{request.requestedForDate ? formatDate(request.requestedForDate) : "—"}</td>
+                        </tr>
+                      ))}
+                      {loanEarlyRepayments(selected.id).length === 0 && (
+                        <tr><td colSpan={4} className="py-4 text-center text-sm text-muted-foreground">No early repayment requests yet.</td></tr>
                       )}
                     </tbody>
                   </table>

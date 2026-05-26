@@ -31,19 +31,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    try {
-      const u = localStorage.getItem(STORAGE_USER);
-      const r = localStorage.getItem(STORAGE_ROLE) as AppRole | null;
-      if (u) {
-        const parsed = JSON.parse(u) as AuthUser;
-        setUser(parsed);
-        setActiveRole(r && parsed.roles.includes(r) ? r : parsed.roles[0]);
+    const restore = async () => {
+      try {
+        const r = localStorage.getItem(STORAGE_ROLE) as AppRole | null;
+        if (import.meta.env.VITE_API_BASE_URL) {
+          try {
+            const me = await authService.me();
+            if (me) {
+              const role = (r && me.roles.includes(r) ? r : me.roles[0]) ?? null;
+              setUser(me);
+              setActiveRole(role);
+              persist(me, role);
+            } else {
+              persist(null, null);
+            }
+          } catch {
+            persist(null, null);
+          }
+        } else {
+          const u = localStorage.getItem(STORAGE_USER);
+          if (u) {
+            const parsed = JSON.parse(u) as AuthUser;
+            setUser(parsed);
+            setActiveRole(r && parsed.roles.includes(r) ? r : parsed.roles[0]);
+          }
+        }
+      } catch {
+        // ignore
+      } finally {
+        setLoading(false);
       }
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false);
-    }
+    };
+
+    restore();
   }, []);
 
   const persist = (u: AuthUser | null, role: AppRole | null) => {
@@ -59,9 +79,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signInWithEmail = useCallback(async (email: string, _password: string) => {
-    // TODO: Wire to Worker /api/auth/sign-in. For now, lookup by seed email.
-    const found = await authService.findByEmail(email);
+  const signInWithEmail = useCallback(async (email: string, password: string) => {
+    const found = await authService.signInWithEmail(email, password);
     if (!found) throw new Error("No account found for that email");
     const role = found.roles[0];
     setUser(found);
@@ -71,7 +90,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
-    // Placeholder Google sign-in — picks the dual-role demo user.
+    if (import.meta.env.VITE_API_BASE_URL) {
+      throw new Error("Google sign-in is handled through the Worker redirect.");
+    }
     const all = await authService.list();
     const dual = all.find((u) => u.roles.includes("admin") && u.roles.includes("member")) ?? all[0];
     const role = dual.roles[0];
@@ -81,7 +102,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return dual;
   }, []);
 
-  const signOut = useCallback(() => {
+  const signOut = useCallback(async () => {
+    try {
+      await authService.signOut();
+    } catch {
+      // ignore sign-out errors
+    }
     setUser(null);
     setActiveRole(null);
     persist(null, null);

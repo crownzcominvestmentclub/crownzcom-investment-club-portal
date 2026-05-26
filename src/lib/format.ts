@@ -1,26 +1,27 @@
-// Display + numeric formatting helpers (UGX, dates, etc.)
+// Display + numeric formatting helpers.
 
 export const UGX = "UGX";
 
-export function formatUGX(value: number | undefined | null, opts?: { compact?: boolean }): string {
-  if (value === undefined || value === null || Number.isNaN(value)) return "—";
-  if (opts?.compact && Math.abs(value) >= 1_000_000) {
-    return `${UGX} ${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`;
-  }
-  if (opts?.compact && Math.abs(value) >= 1_000) {
-    return `${UGX} ${(value / 1_000).toFixed(value % 1_000 === 0 ? 0 : 1)}K`;
-  }
-  return `${UGX} ${new Intl.NumberFormat("en-UG", { maximumFractionDigits: 0 }).format(value)}`;
+export function formatUGX(value: number | undefined | null): string {
+  if (value === undefined || value === null || Number.isNaN(value)) return "-";
+
+  const roundedToWhole = Math.round(value);
+  const hasDecimals = Math.abs(value - roundedToWhole) >= 0.005;
+
+  return new Intl.NumberFormat("en-UG", {
+    minimumFractionDigits: hasDecimals ? 2 : 0,
+    maximumFractionDigits: hasDecimals ? 2 : 0,
+  }).format(value);
 }
 
 export function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-UG").format(value);
 }
 
-export function formatDate(value: string | Date | undefined | null): string {
-  if (!value) return "—";
-  const d = typeof value === "string" ? new Date(value) : value;
-  if (isNaN(d.getTime())) return "—";
+export function formatDate(value: string | Date | number | undefined | null): string {
+  if (!value) return "-";
+  const d = typeof value === "string" ? new Date(value) : typeof value === "number" ? new Date(value) : value instanceof Date ? value : null;
+  if (!d || isNaN(d.getTime())) return "-";
   return new Intl.DateTimeFormat("en-GB", {
     day: "2-digit",
     month: "short",
@@ -28,10 +29,10 @@ export function formatDate(value: string | Date | undefined | null): string {
   }).format(d);
 }
 
-export function formatDateTime(value: string | Date | undefined | null): string {
-  if (!value) return "—";
-  const d = typeof value === "string" ? new Date(value) : value;
-  if (isNaN(d.getTime())) return "—";
+export function formatDateTime(value: string | Date | number | undefined | null): string {
+  if (!value) return "-";
+  const d = typeof value === "string" ? new Date(value) : typeof value === "number" ? new Date(value) : value instanceof Date ? value : null;
+  if (!d || isNaN(d.getTime())) return "-";
   return new Intl.DateTimeFormat("en-GB", {
     day: "2-digit",
     month: "short",
@@ -42,19 +43,19 @@ export function formatDateTime(value: string | Date | undefined | null): string 
 }
 
 export function formatMonth(month: string): string {
-  // "YYYY-MM" -> "Mon YYYY"
   if (!month || !/^\d{4}-\d{2}$/.test(month)) return month;
   const [y, m] = month.split("-").map(Number);
   return new Intl.DateTimeFormat("en-GB", { month: "short", year: "numeric" }).format(new Date(y, m - 1, 1));
 }
 
 export function formatPercent(value: number, digits = 1): string {
-  if (value === undefined || value === null || Number.isNaN(value)) return "—";
+  if (value === undefined || value === null || Number.isNaN(value)) return "-";
   return `${value.toFixed(digits)}%`;
 }
 
-export function initials(name: string): string {
-  return name
+export function initials(name?: string): string {
+  if (!name) return "";
+  return String(name)
     .split(" ")
     .filter(Boolean)
     .slice(0, 2)

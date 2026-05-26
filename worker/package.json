@@ -11,6 +11,8 @@
     "db:migrate:remote": "wrangler d1 migrations apply crownzcom --remote",
     "db:seed:local": "wrangler d1 execute crownzcom --local --file=./migrations/0002_seed.sql",
     "db:seed:remote": "wrangler d1 execute crownzcom --remote --file=./migrations/0002_seed.sql",
+    "db:backfill-loans:local": "wrangler d1 execute crownzcom --local --file=./scripts/backfill-loan-schedule-metadata.sql",
+    "db:backfill-loans:remote": "wrangler d1 execute crownzcom --remote --file=./scripts/backfill-loan-schedule-metadata.sql",
     "secret:jwt": "wrangler secret put JWT_SECRET",
     "typecheck": "tsc --noEmit"
   },

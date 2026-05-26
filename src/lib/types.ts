@@ -24,12 +24,16 @@ export interface Savings {
   memberId: ID;
   amount: number; // UGX
   month: MonthString;
+  status?: "paid" | "partial" | "missed";
+  paidAt?: ISODate;
   createdAt: ISODate;
 }
 
 export type LoanType = "short_term" | "long_term";
 export type RepaymentType = "equal_installments" | "custom";
 export type InterestMode = "flat" | "reducing_balance";
+export type RepaymentStatus = "pending" | "paid" | "late" | "early";
+export type LoanChargeKind = "processing_fee" | "penalty" | "insurance" | "other";
 export type LoanStatus =
   | "pending_guarantor_approval"
   | "pending_admin_approval"
@@ -39,16 +43,27 @@ export type LoanStatus =
   | "guarantor_coverage_failed";
 
 export interface RepaymentPlanItem {
+  installmentNumber?: number;
   month: MonthString;
+  dueDate?: ISODate;
   principal: number;
   interest: number;
+  chargeAmount?: number;
+  chargeId?: ID;
+  chargeLabel?: string;
+  baseTotal?: number;
   total: number;
   balance: number;
+  status: RepaymentStatus;
+  paymentId?: ID;
+  paidAt?: ISODate;
 }
 
 export interface Loan {
   id: ID;
   memberId: ID;
+  memberName?: string;
+  memberNumber?: string;
   amount: number;
   duration: number;
   selectedMonths?: MonthString[];
@@ -59,6 +74,9 @@ export interface Loan {
   repaymentPlan?: RepaymentPlanItem[];
   interestCalculationModeApplied: InterestMode;
   monthlyInterestRateApplied: number;
+  repaymentStartMonth?: MonthString;
+  firstRepaymentDate?: ISODate;
+  repaymentDayOfMonth?: number;
   repaymentPlanVersion?: number;
   repaymentPlanGeneratedAt?: ISODate;
   repaymentPlanBasis?: string;
@@ -89,6 +107,7 @@ export interface LoanRepayment {
   month: MonthString;
   paidAt: ISODate;
   isEarlyPayment?: boolean;
+  paymentStatus: RepaymentStatus;
 }
 
 export interface LoanCharge {
@@ -96,6 +115,9 @@ export interface LoanCharge {
   loanId: ID;
   description: string;
   amount: number;
+  kind?: LoanChargeKind;
+  note?: string;
+  appliesToMonth?: MonthString;
   createdAt: ISODate;
 }
 
@@ -150,6 +172,8 @@ export interface Subscription {
   memberId: ID;
   amount: number;
   month: MonthString; // also serves as year tracking
+  status?: "paid" | "due" | "overdue";
+  paidAt?: ISODate;
   createdAt: ISODate;
 }
 
@@ -176,6 +200,9 @@ export interface FinancialConfig {
   id: ID;
   loanInterestRate: number; // monthly %, short-term
   longTermInterestRate: number; // monthly %, long-term
+  longTermLoansEnabled: boolean;
+  loanInterestRetentionPercentage: number;
+  trustInterestRetentionPercentage: number;
   interestCalculationMode: InterestMode;
   loanEligibilityPercentage: number; // % of savings
   defaultBankCharge: number;
@@ -206,24 +233,53 @@ export interface InterestMonthly {
   year: number;
   loanInterestTotal: number;
   trustInterestTotal: number;
+  loanInterestRetained: number;
+  trustInterestRetained: number;
+  loanInterestDistributed: number;
+  trustInterestDistributed: number;
+  closedAt?: ISODate;
+  closedBy?: ID;
   createdAt: ISODate;
   notes?: string;
+}
+
+export interface InterestAllocation {
+  id: ID;
+  memberId: ID;
+  month: MonthString;
+  year: number;
+  loanInterest: number;
+  trustInterest: number;
+  totalInterest: number;
+  createdAt: ISODate;
 }
 
 export interface RetainedEarnings {
   id: ID;
   year: number;
-  percentage: number;
+  month: MonthString;
+  source: "loan" | "trust";
+  grossInterest: number;
+  retentionPercentage: number;
+  retainedAmount: number;
+  distributedAmount: number;
   createdAt: ISODate;
   notes?: string;
 }
 
+export type DocumentScope = "general" | "loan_terms";
+
 export interface DocumentRecord {
   id: ID;
   title: string;
+  categoryId?: ID;
   category: string;
+  scope?: DocumentScope;
   fileId: string;
+  objectKey?: string;
   bucketId: string;
+  contentType?: string;
+  sizeBytes?: number;
   uploadedBy: ID;
   uploadedAt: ISODate;
   tags?: string[];

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { Plus, Receipt, TrendingDown, Tags, Search } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Plus, Receipt, TrendingDown, Tags, Search, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
@@ -13,9 +14,14 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { useExpenses } from "@/hooks/data";
+import { queryKeys, useExpenses } from "@/hooks/data";
 import { formatDate, formatUGX } from "@/lib/format";
+import { expensesService } from "@/services";
 
 const ALL = "all";
 const CATEGORIES = ["Banking", "Operations", "Events", "Technology", "Professional", "Travel", "Utilities", "Other"];
@@ -23,10 +29,13 @@ const CATEGORIES = ["Banking", "Operations", "Events", "Technology", "Profession
 export default function AdminExpenses() {
   const expenses = useExpenses();
   const { toast } = useToast();
+  const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [cat, setCat] = useState<string>(ALL);
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; description: string } | null>(null);
   const [form, setForm] = useState({
     description: "",
     amount: "",
@@ -40,14 +49,14 @@ export default function AdminExpenses() {
       if (cat !== ALL && e.category !== cat) return false;
       if (search && !e.description.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
-    }).sort((a, b) => b.date.localeCompare(a.date));
+    }).sort((a, b) => String(b.date).localeCompare(String(a.date)));
   }, [list, cat, search]);
 
   const totalAll = list.reduce((a, e) => a + e.amount, 0);
   const totalFiltered = filtered.reduce((a, e) => a + e.amount, 0);
   const monthTotal = useMemo(() => {
     const ym = new Date().toISOString().slice(0, 7);
-    return list.filter((e) => e.date.startsWith(ym)).reduce((a, e) => a + e.amount, 0);
+    return list.filter((e) => String(e.date).startsWith(ym)).reduce((a, e) => a + e.amount, 0);
   }, [list]);
   const categoryCount = useMemo(() => new Set(list.map((e) => e.category)).size, [list]);
 
@@ -64,6 +73,23 @@ export default function AdminExpenses() {
       setForm({ description: "", amount: "", category: "Operations", date: new Date().toISOString().slice(0, 10) });
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleRemove = async (id: string, description: string) => {
+    setRemovingId(id);
+    try {
+      await expensesService.remove(id);
+      await qc.invalidateQueries({ queryKey: queryKeys.expenses });
+      toast({ title: "Expense deleted", description: description || "The expense entry was removed." });
+    } catch (error) {
+      toast({
+        title: "Delete failed",
+        description: error instanceof Error ? error.message : "We could not delete this expense.",
+        variant: "destructive",
+      });
+    } finally {
+      setRemovingId(null);
     }
   };
 
@@ -114,11 +140,36 @@ export default function AdminExpenses() {
         }
       />
 
+      <AlertDialog open={!!deleteTarget} onOpenChange={(openState) => !openState && !removingId && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete expense?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget ? `This will permanently remove "${deleteTarget.description}" from expenses.` : "This action cannot be undone."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={!!removingId}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!!removingId}
+              onClick={async (event) => {
+                event.preventDefault();
+                if (!deleteTarget) return;
+                await handleRemove(deleteTarget.id, deleteTarget.description);
+                setDeleteTarget(null);
+              }}
+            >
+              {removingId ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Total expenses" value={formatUGX(totalAll, { compact: true })} icon={Receipt} accent="primary" loading={expenses.isLoading} />
-        <KpiCard label="This month" value={formatUGX(monthTotal, { compact: true })} icon={TrendingDown} accent="warning" loading={expenses.isLoading} />
+        <KpiCard label="Total expenses" value={formatUGX(totalAll)} icon={Receipt} accent="primary" loading={expenses.isLoading} />
+        <KpiCard label="This month" value={formatUGX(monthTotal)} icon={TrendingDown} accent="warning" loading={expenses.isLoading} />
         <KpiCard label="Categories" value={String(categoryCount)} icon={Tags} accent="info" loading={expenses.isLoading} />
-        <KpiCard label="Filtered total" value={formatUGX(totalFiltered, { compact: true })} icon={Receipt} accent="success" loading={expenses.isLoading} hint={`${filtered.length} entries`} />
+        <KpiCard label="Filtered total" value={formatUGX(totalFiltered)} icon={Receipt} accent="success" loading={expenses.isLoading} hint={`${filtered.length} entries`} />
       </div>
 
       <div className="mt-6 rounded-xl border bg-card shadow-[var(--shadow-sm)]">
@@ -143,11 +194,12 @@ export default function AdminExpenses() {
                 <th>Category</th>
                 <th>Date</th>
                 <th className="text-right">Amount</th>
+                <th className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {expenses.isLoading && Array.from({ length: 4 }).map((_, i) => (
-                <tr key={i}>{Array.from({ length: 4 }).map((__, j) => <td key={j}><Skeleton className="h-4 w-24" /></td>)}</tr>
+                <tr key={i}>{Array.from({ length: 5 }).map((__, j) => <td key={j}><Skeleton className="h-4 w-24" /></td>)}</tr>
               ))}
               {!expenses.isLoading && filtered.map((e) => (
                 <tr key={e.id}>
@@ -155,16 +207,27 @@ export default function AdminExpenses() {
                   <td><span className="rounded-full border bg-muted/50 px-2 py-0.5 text-xs">{e.category}</span></td>
                   <td className="text-muted-foreground">{formatDate(e.date)}</td>
                   <td className="text-right font-mono">{formatUGX(e.amount)}</td>
+                  <td className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => setDeleteTarget({ id: e.id, description: e.description })}
+                      disabled={removingId === e.id}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </td>
                 </tr>
               ))}
               {!expenses.isLoading && filtered.length === 0 && (
-                <tr><td colSpan={4} className="py-12"><EmptyState title="No expenses match" /></td></tr>
+                <tr><td colSpan={5} className="py-12"><EmptyState title="No expenses match" /></td></tr>
               )}
             </tbody>
             {filtered.length > 0 && (
               <tfoot>
                 <tr className="border-t bg-muted/30 font-medium">
-                  <td colSpan={3}>Total</td>
+                  <td colSpan={4}>Total</td>
                   <td className="text-right font-mono">{formatUGX(totalFiltered)}</td>
                 </tr>
               </tfoot>

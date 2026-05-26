@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Plus, Wallet, Users, Calendar, Search, Layers } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
+import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,8 +19,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { useMembers, useSavings } from "@/hooks/data";
-import { formatDate, formatMonth, formatUGX } from "@/lib/format";
+import { queryKeys, useMembers, useSavings } from "@/hooks/data";
+import { formatDate, formatMonth, formatNumber, formatUGX } from "@/lib/format";
+import { savingsService } from "@/services";
+import type { Savings } from "@/lib/types";
 
 const ALL = "all";
 
@@ -26,6 +30,7 @@ export default function AdminSavings() {
   const members = useMembers();
   const savings = useSavings();
   const { toast } = useToast();
+  const qc = useQueryClient();
 
   const [yearFilter, setYearFilter] = useState<string>(ALL);
   const [monthFilter, setMonthFilter] = useState<string>(ALL);
@@ -35,19 +40,26 @@ export default function AdminSavings() {
   // Single-entry dialog
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ memberId: "", amount: "", month: monthDefault() });
+  const [form, setForm] = useState({
+    memberId: "",
+    amount: "",
+    month: monthDefault(),
+    paidAt: isoDateInput(new Date().toISOString()),
+  });
 
   // Batch entry
   const [batchMonth, setBatchMonth] = useState(monthDefault());
-  const [batchAmount, setBatchAmount] = useState("100000");
+  const [batchPaidAt, setBatchPaidAt] = useState(isoDateInput(new Date().toISOString()));
+  const [batchDefaultAmount, setBatchDefaultAmount] = useState("100000");
   const [batchSelected, setBatchSelected] = useState<Set<string>>(new Set());
+  const [batchAmounts, setBatchAmounts] = useState<Record<string, string>>({});
 
   const records = savings.data ?? [];
 
   const years = useMemo(() => {
     const set = new Set<string>();
-    records.forEach((r) => set.add(r.month.slice(0, 4)));
-    return Array.from(set).sort((a, b) => b.localeCompare(a));
+    records.forEach((r) => set.add(String(r.month).slice(0, 4)));
+    return Array.from(set).sort((a, b) => String(b).localeCompare(String(a)));
   }, [records]);
 
   const months = monthOptions();
@@ -55,7 +67,7 @@ export default function AdminSavings() {
   const filtered = useMemo(() => {
     return records
       .filter((r) => {
-        const [y, m] = r.month.split("-");
+        const [y, m] = String(r.month).split("-");
         if (yearFilter !== ALL && y !== yearFilter) return false;
         if (monthFilter !== ALL && m !== monthFilter) return false;
         if (memberFilter !== ALL && r.memberId !== memberFilter) return false;
@@ -66,16 +78,24 @@ export default function AdminSavings() {
         }
         return true;
       })
-      .sort((a, b) => b.month.localeCompare(a.month));
+      .sort((a, b) => String(b.month).localeCompare(String(a.month)));
   }, [records, yearFilter, monthFilter, memberFilter, search, members.data]);
 
   const totalAll = useMemo(() => records.reduce((a, s) => a + s.amount, 0), [records]);
   const totalFiltered = useMemo(() => filtered.reduce((a, s) => a + s.amount, 0), [filtered]);
   const ytdTotal = useMemo(() => {
     const y = String(new Date().getFullYear());
-    return records.filter((r) => r.month.startsWith(y)).reduce((a, s) => a + s.amount, 0);
+    return records.filter((r) => String(r.month).startsWith(y)).reduce((a, s) => a + s.amount, 0);
   }, [records]);
   const contributorCount = useMemo(() => new Set(records.map((r) => r.memberId)).size, [records]);
+  const batchTotal = useMemo(
+    () =>
+      Array.from(batchSelected).reduce((sum, memberId) => {
+        const amount = Number(batchAmounts[memberId] ?? 0);
+        return sum + (Number.isFinite(amount) ? amount : 0);
+      }, 0),
+    [batchAmounts, batchSelected],
+  );
 
   const handleSubmit = async () => {
     if (!form.memberId || !form.amount || !form.month) {
@@ -84,28 +104,129 @@ export default function AdminSavings() {
     }
     setSubmitting(true);
     try {
-      toast({ title: "Contribution recorded", description: `${formatUGX(Number(form.amount))} for ${formatMonth(form.month)}.` });
+      await savingsService.add({
+        memberId: form.memberId,
+        amount: Number(form.amount),
+        month: form.month,
+        paidAt: new Date(`${form.paidAt}T00:00:00`).toISOString(),
+      });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: queryKeys.savings }),
+        qc.invalidateQueries({ queryKey: queryKeys.savingsByMember(form.memberId) }),
+      ]);
+      toast({ title: "Contribution recorded", description: `${formatNumber(Number(form.amount))} for ${formatMonth(form.month)}.` });
       setOpen(false);
-      setForm({ memberId: "", amount: "", month: monthDefault() });
+      setForm({
+        memberId: "",
+        amount: "",
+        month: monthDefault(),
+        paidAt: isoDateInput(new Date().toISOString()),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "We couldn't save that contribution.";
+      toast({
+        title: "Save failed",
+        description: message.includes("duplicate_period")
+          ? "That member already has a savings entry for the selected month."
+          : message,
+        variant: "destructive",
+      });
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleBatch = () => {
-    const amount = Number(batchAmount);
-    if (!amount || batchSelected.size === 0) {
-      toast({ title: "Nothing to record", description: "Pick members and an amount.", variant: "destructive" });
-      return;
-    }
-    toast({
-      title: "Batch contributions queued",
-      description: `${batchSelected.size} members × ${formatUGX(amount)} for ${formatMonth(batchMonth)}.`,
-    });
-    setBatchSelected(new Set());
+  const ensureBatchAmount = (memberId: string) => {
+    setBatchAmounts((current) => (
+      current[memberId] !== undefined
+        ? current
+        : { ...current, [memberId]: batchDefaultAmount }
+    ));
   };
 
-  const memberName = (id: string) => members.data?.find((m) => m.id === id)?.name ?? "—";
+  const toggleBatchMember = (memberId: string, checked: boolean) => {
+    setBatchSelected((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(memberId);
+      } else {
+        next.delete(memberId);
+      }
+      return next;
+    });
+
+    if (checked) ensureBatchAmount(memberId);
+  };
+
+  const selectAllBatchMembers = () => {
+    const allIds = members.data?.map((m) => m.id) ?? [];
+    setBatchSelected(new Set(allIds));
+    setBatchAmounts((current) => {
+      const next = { ...current };
+      allIds.forEach((memberId) => {
+        if (next[memberId] === undefined) next[memberId] = batchDefaultAmount;
+      });
+      return next;
+    });
+  };
+
+  const clearBatchMembers = () => {
+    setBatchSelected(new Set());
+    setBatchAmounts({});
+  };
+
+  const handleBatch = async () => {
+    if (batchSelected.size === 0) {
+      toast({ title: "Nothing to record", description: "Pick at least one member.", variant: "destructive" });
+      return;
+    }
+
+    const entries = Array.from(batchSelected)
+      .map((memberId) => ({
+        memberId,
+        amount: Number(batchAmounts[memberId] ?? 0),
+      }))
+      .filter((entry) => entry.amount > 0);
+
+    if (entries.length !== batchSelected.size) {
+      toast({
+        title: "Missing amounts",
+        description: "Enter a valid amount for every selected member.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      await savingsService.batchAdd(
+        entries.map((entry) => ({
+          memberId: entry.memberId,
+          amount: entry.amount,
+          month: batchMonth,
+          paidAt: new Date(`${batchPaidAt}T00:00:00`).toISOString(),
+        })),
+      );
+      await qc.invalidateQueries({ queryKey: queryKeys.savings });
+      await Promise.all(entries.map((entry) => qc.invalidateQueries({ queryKey: queryKeys.savingsByMember(entry.memberId) })));
+
+      toast({
+        title: "Batch contributions recorded",
+        description: `${entries.length} members, total ${formatNumber(batchTotal)} for ${formatMonth(batchMonth)}.`,
+      });
+      clearBatchMembers();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "We couldn't post the batch entries.";
+      toast({
+        title: "Batch save failed",
+        description: message.includes("duplicate_period")
+          ? "One or more selected members already have a savings entry for that month."
+          : message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const memberName = (id: string) => members.data?.find((m) => m.id === id)?.name ?? "-";
 
   return (
     <>
@@ -142,6 +263,10 @@ export default function AdminSavings() {
                   <Label>Amount (UGX)</Label>
                   <Input inputMode="numeric" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value.replace(/[^\d]/g, "") })} />
                 </div>
+                <div className="grid gap-2">
+                  <Label>Payment date</Label>
+                  <Input type="date" value={form.paidAt} onChange={(e) => setForm({ ...form, paidAt: e.target.value })} />
+                </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setOpen(false)} disabled={submitting}>Cancel</Button>
@@ -153,10 +278,10 @@ export default function AdminSavings() {
       />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Total savings" value={formatUGX(totalAll, { compact: true })} icon={Wallet} accent="primary" loading={savings.isLoading} hint={`${records.length} entries`} />
-        <KpiCard label="This year" value={formatUGX(ytdTotal, { compact: true })} icon={Calendar} accent="success" loading={savings.isLoading} hint={String(new Date().getFullYear())} />
+        <KpiCard label="Total savings" value={formatNumber(totalAll)} icon={Wallet} accent="primary" loading={savings.isLoading} hint={`${records.length} entries`} />
+        <KpiCard label="This year" value={formatNumber(ytdTotal)} icon={Calendar} accent="success" loading={savings.isLoading} hint={String(new Date().getFullYear())} />
         <KpiCard label="Contributors" value={String(contributorCount)} icon={Users} accent="info" loading={savings.isLoading} />
-        <KpiCard label="Filtered total" value={formatUGX(totalFiltered, { compact: true })} icon={Wallet} accent="warning" loading={savings.isLoading} hint={`${filtered.length} records`} />
+        <KpiCard label="Filtered total" value={formatNumber(totalFiltered)} icon={Wallet} accent="warning" loading={savings.isLoading} hint={`${filtered.length} records`} />
       </div>
 
       <Tabs defaultValue="ledger" className="mt-6">
@@ -203,6 +328,8 @@ export default function AdminSavings() {
                     <th>Member</th>
                     <th>Month</th>
                     <th className="text-right">Amount</th>
+                    <th>Status</th>
+                    <th>Paid</th>
                     <th>Recorded</th>
                   </tr>
                 </thead>
@@ -212,6 +339,8 @@ export default function AdminSavings() {
                       <td><Skeleton className="h-4 w-40" /></td>
                       <td><Skeleton className="h-4 w-24" /></td>
                       <td className="text-right"><Skeleton className="ml-auto h-4 w-20" /></td>
+                      <td><Skeleton className="h-5 w-16" /></td>
+                      <td><Skeleton className="h-4 w-24" /></td>
                       <td><Skeleton className="h-4 w-24" /></td>
                     </tr>
                   ))}
@@ -219,12 +348,14 @@ export default function AdminSavings() {
                     <tr key={s.id}>
                       <td className="font-medium">{memberName(s.memberId)}</td>
                       <td>{formatMonth(s.month)}</td>
-                      <td className="text-right font-mono">{formatUGX(s.amount)}</td>
+                      <td className="text-right font-mono">{formatNumber(s.amount)}</td>
+                      <td><StatusBadge status={s.status ?? "paid"} /></td>
+                      <td className="text-muted-foreground">{formatDate(s.paidAt ?? s.createdAt)}</td>
                       <td className="text-muted-foreground">{formatDate(s.createdAt)}</td>
                     </tr>
                   ))}
                   {!savings.isLoading && filtered.length === 0 && (
-                    <tr><td colSpan={4} className="py-12">
+                    <tr><td colSpan={6} className="py-12">
                       <EmptyState title="No contributions match" description="Adjust the filters to see more entries." />
                     </td></tr>
                   )}
@@ -233,8 +364,8 @@ export default function AdminSavings() {
                   <tfoot>
                     <tr className="border-t bg-muted/30 font-medium">
                       <td colSpan={2}>Total{filtered.length > 100 ? " (showing first 100)" : ""}</td>
-                      <td className="text-right font-mono">{formatUGX(totalFiltered)}</td>
-                      <td className="text-muted-foreground">{filtered.length} records</td>
+                      <td className="text-right font-mono">{formatNumber(totalFiltered)}</td>
+                      <td colSpan={3} className="text-muted-foreground">{filtered.length} records</td>
                     </tr>
                   </tfoot>
                 )}
@@ -248,7 +379,7 @@ export default function AdminSavings() {
             <div className="rounded-xl border bg-card p-5 shadow-[var(--shadow-sm)] lg:col-span-1">
               <h3 className="text-sm font-semibold">Batch settings</h3>
               <p className="mt-1 text-xs text-muted-foreground">
-                Apply the same amount to selected members. Server-authoritative; runs via Cloudflare Worker (POST /api/savings/batch).
+                Enter a specific amount for each selected member. Batch posting still runs through the Worker endpoint.
               </p>
               <div className="mt-4 grid gap-3">
                 <div className="grid gap-2">
@@ -256,22 +387,29 @@ export default function AdminSavings() {
                   <Input type="month" value={batchMonth} onChange={(e) => setBatchMonth(e.target.value)} />
                 </div>
                 <div className="grid gap-2">
-                  <Label>Amount per member (UGX)</Label>
-                  <Input inputMode="numeric" value={batchAmount} onChange={(e) => setBatchAmount(e.target.value.replace(/[^\d]/g, ""))} />
+                  <Label>Payment date</Label>
+                  <Input type="date" value={batchPaidAt} onChange={(e) => setBatchPaidAt(e.target.value)} />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Default amount for new selections (UGX)</Label>
+                  <Input inputMode="numeric" value={batchDefaultAmount} onChange={(e) => setBatchDefaultAmount(e.target.value.replace(/[^\d]/g, ""))} />
+                  <p className="text-xs text-muted-foreground">
+                    Used to prefill the amount when you check a member. You can edit every member after selection.
+                  </p>
                 </div>
                 <div className="rounded-lg border bg-muted/30 p-3 text-sm">
                   <div className="flex justify-between"><span className="text-muted-foreground">Selected</span><span className="font-medium">{batchSelected.size}</span></div>
-                  <div className="mt-1 flex justify-between"><span className="text-muted-foreground">Total to post</span><span className="font-mono font-medium">{formatUGX((Number(batchAmount) || 0) * batchSelected.size)}</span></div>
+                  <div className="mt-1 flex justify-between"><span className="text-muted-foreground">Total to post</span><span className="font-mono font-medium">{formatNumber(batchTotal)}</span></div>
                 </div>
-                <Button onClick={handleBatch} disabled={batchSelected.size === 0 || !batchAmount}>Post batch</Button>
+                <Button onClick={handleBatch} disabled={batchSelected.size === 0}>Post batch</Button>
               </div>
             </div>
             <div className="rounded-xl border bg-card shadow-[var(--shadow-sm)] lg:col-span-2">
               <div className="flex items-center justify-between border-b p-4">
                 <h3 className="text-sm font-semibold">Members</h3>
                 <div className="flex gap-2">
-                  <Button variant="ghost" size="sm" onClick={() => setBatchSelected(new Set(members.data?.map((m) => m.id)))}>Select all</Button>
-                  <Button variant="ghost" size="sm" onClick={() => setBatchSelected(new Set())}>Clear</Button>
+                  <Button variant="ghost" size="sm" onClick={selectAllBatchMembers}>Select all</Button>
+                  <Button variant="ghost" size="sm" onClick={clearBatchMembers}>Clear</Button>
                 </div>
               </div>
               <ScrollArea className="h-[420px]">
@@ -283,16 +421,35 @@ export default function AdminSavings() {
                         <Checkbox
                           id={`b_${m.id}`}
                           checked={checked}
-                          onCheckedChange={(v) => {
-                            const next = new Set(batchSelected);
-                            v ? next.add(m.id) : next.delete(m.id);
-                            setBatchSelected(next);
-                          }}
+                          onCheckedChange={(v) => toggleBatchMember(m.id, Boolean(v))}
                         />
-                        <Label htmlFor={`b_${m.id}`} className="flex-1 cursor-pointer">
-                          <span className="font-medium">{m.name}</span>
-                          <span className="ml-2 font-mono text-xs text-muted-foreground">{m.membershipNumber}</span>
-                        </Label>
+                        <div className="flex flex-1 items-center gap-3">
+                          <Label htmlFor={`b_${m.id}`} className="min-w-0 flex-1 cursor-pointer">
+                            <span className="font-medium">{m.name}</span>
+                            <span className="ml-2 font-mono text-xs text-muted-foreground">{m.membershipNumber}</span>
+                          </Label>
+                          <div className="w-40">
+                            <Input
+                              inputMode="numeric"
+                              placeholder="Amount"
+                              disabled={!checked}
+                              value={batchAmounts[m.id] ?? ""}
+                              onFocus={() => {
+                                if (!checked) toggleBatchMember(m.id, true);
+                              }}
+                              onChange={(e) => {
+                                const value = e.target.value.replace(/[^\d]/g, "");
+                                if (!checked) toggleBatchMember(m.id, true);
+                                setBatchAmounts((current) => ({ ...current, [m.id]: value }));
+                              }}
+                            />
+                          </div>
+                          <div className="w-24 text-right text-xs text-muted-foreground">
+                            {checked && batchAmounts[m.id]
+                              ? formatNumber(Number(batchAmounts[m.id] ?? 0))
+                              : ""}
+                          </div>
+                        </div>
                       </li>
                     );
                   })}
@@ -309,6 +466,9 @@ export default function AdminSavings() {
 function monthDefault() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function isoDateInput(input: string) {
+  return input.slice(0, 10);
 }
 function monthOptions() {
   return [

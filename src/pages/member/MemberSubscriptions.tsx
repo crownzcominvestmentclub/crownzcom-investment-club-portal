@@ -28,13 +28,23 @@ export default function MemberSubscriptions() {
   const [form, setForm] = useState({ amount: "50000", year: String(currentYear) });
 
   const mySubs = useMemo(
-    () => (subs.data ?? []).filter((s) => s.memberId === memberId).sort((a, b) => b.month.localeCompare(a.month)),
+    () => (subs.data ?? []).filter((s) => s.memberId === memberId).sort((a, b) => String(b.month).localeCompare(String(a.month))),
     [subs.data, memberId],
   );
 
-  const totalPaid = mySubs.reduce((a, s) => a + s.amount, 0);
-  const yearsCovered = new Set(mySubs.map((s) => s.month.slice(0, 4)));
-  const currentYearPaid = mySubs.find((s) => s.month.startsWith(`${currentYear}-`));
+  const totalPaid = mySubs
+    .filter((subscription) => (subscription.status ?? "paid") === "paid")
+    .reduce((total, subscription) => total + subscription.amount, 0);
+  const yearsCovered = new Set(
+    mySubs
+      .filter((subscription) => (subscription.status ?? "paid") === "paid")
+      .map((subscription) => String(subscription.month).slice(0, 4))
+  );
+  const currentYearPaid = mySubs.find(
+    (subscription) =>
+      String(subscription.month).startsWith(`${currentYear}-`) &&
+      (subscription.status ?? "paid") === "paid"
+  );
 
   const handleSubmit = async () => {
     const amount = Number(form.amount);
@@ -97,7 +107,7 @@ export default function MemberSubscriptions() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <KpiCard label={`This year (${currentYear})`} value={currentYearPaid ? "Paid" : "Pending"} icon={currentYearPaid ? CheckCircle2 : AlertCircle} accent={currentYearPaid ? "success" : "warning"} loading={subs.isLoading} />
         <KpiCard label="Years covered" value={String(yearsCovered.size)} icon={CalendarRange} accent="primary" loading={subs.isLoading} />
-        <KpiCard label="Total paid" value={formatUGX(totalPaid, { compact: true })} icon={CheckCircle2} accent="info" loading={subs.isLoading} />
+        <KpiCard label="Total paid" value={formatUGX(totalPaid)} icon={CheckCircle2} accent="info" loading={subs.isLoading} />
       </div>
 
       <div className="mt-6 rounded-xl border bg-card shadow-[var(--shadow-sm)]">
@@ -114,8 +124,8 @@ export default function MemberSubscriptions() {
                 <tr key={s.id}>
                   <td className="font-medium">{s.month.slice(0, 4)}</td>
                   <td className="text-right font-mono">{formatUGX(s.amount)}</td>
-                  <td><StatusBadge status="paid" /></td>
-                  <td className="text-muted-foreground">{formatDate(s.createdAt)}</td>
+                  <td><StatusBadge status={(s.status ?? "paid") === "paid" ? "paid" : "pending"} /></td>
+                  <td className="text-muted-foreground">{formatDate(s.paidAt ?? s.createdAt)}</td>
                 </tr>
               ))}
               {!subs.isLoading && mySubs.length === 0 && (
